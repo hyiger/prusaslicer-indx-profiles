@@ -24,10 +24,13 @@ vendor/
   hyigerINDX.idx                  version index
 filaments/
   hyigerINDX-0.6-filaments.ini    12 filament presets for 0.6 mm, for import
+printer/
+  Prusa CORE One INDX 8T HF0.6 nozzle.ini   flattened printer preset
 tools/
   nozzles.py                      per-nozzle configuration table
   build_print_profiles.py         generates the vendor bundle
   derive_filaments.py             generates filament presets
+  build_printer_preset.py         generates printer presets
 ```
 
 One vendor bundle holds every nozzle size. The filename becomes the vendor ID,
@@ -106,24 +109,58 @@ cp vendor/hyigerINDX.ini vendor/hyigerINDX.idx ~/.config/PrusaSlicer/vendor/
 No Configuration Wizard step. PrusaSlicer loads every `.ini` in `vendor/` at
 startup, and these attach themselves to your existing Prusa INDX printer.
 
-### 2. Fix the printer preset
+### 2. Install the printer preset
 
-**Not optional.** A printer preset cloned from the shipping 0.4 mm INDX profile
-still caps layer height at 0.3 mm, which silently hides any profile above it —
-including `0.32mm Draft`.
+**Not optional.** Prusa declares `variants = HF0.4` for both INDX models, so
+there is no HF0.6 printer to pick in the Configuration Wizard. The print
+profiles bind on `nozzle_diameter[0]==0.6`; with a 0.4 printer selected they
+load correctly and are then filtered out of the dropdown, which looks exactly
+like the bundle having failed to install.
 
-In **Printer Settings → General**, Expert mode on:
+Copy the matching preset into `printer/` in your data directory:
 
-| Field | 0.5 mm | 0.6 mm | 0.8 mm |
-|---|---|---|---|
-| Nozzle diameter | `0.5` | `0.6` | `0.8` |
-| High flow nozzle | checked | checked | checked |
-| Max layer height | `0.35` | `0.4` | `0.6` |
-| Min layer height | `0.12` | `0.15` | `0.2` |
+```bash
+# macOS
+cp "printer/Prusa CORE One INDX 8T HF0.6 nozzle.ini" \
+   ~/Library/Application\ Support/PrusaSlicer/printer/
+```
 
-Set these on **every tool**. Then confirm `printer_variant` matches (`HF0.6`
-and so on) and save the preset. The 0.6 values are Prusa's own, from
-`Prusa CORE One HF0.6 nozzle`.
+Quit and relaunch, then select it. It appears as a normal user preset that
+inherits from Prusa's shipping 0.4 profile, so every changed value keeps its
+reset-to-system arrow.
+
+These files are **fully flattened** on purpose. `load_presets` does
+`preset.config = default_preset.config; preset.config.apply(config)` — a loose
+user preset is applied over PrusaSlicer's defaults, *not* over its `inherits`
+parent, so a delta-only file silently takes a default for every key it omits.
+
+Only 8T at 0.6 is committed. Generate others with:
+
+```bash
+python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.5 -m 4T
+```
+
+#### Or by hand
+
+**Printer Settings → General**, Expert mode on, applied to **every tool**:
+
+| Field | 0.5 mm | 0.6 mm |
+|---|---|---|
+| Nozzle diameter | `0.5` | `0.6` |
+| High flow nozzle | checked | checked |
+| Max layer height | `0.32` | `0.40` |
+| Min layer height | `0.07` | `0.15` |
+| `printer_variant` | `HF0.5` | `HF0.6` |
+
+Prusa's own values, from `Prusa CORE One HF0.5 nozzle` and
+`Prusa CORE One HF0.6 nozzle`. Prusa also sets `wipe = 1` above 0.4; the
+generator carries that across, so set it if you are matching by hand.
+
+0.8 is not listed. Prusa's HF0.4 → HF0.8 delta also moves five retraction
+keys (`retract_length`, `retract_speed`, `deretract_speed`, `retract_lift`,
+`retract_before_wipe`), and whether those transfer to a toolchanger running
+`retract_toolchange = 8` has not been established. The generator refuses 0.8
+rather than guess.
 
 ### 3. Import the filament presets
 
@@ -135,12 +172,17 @@ These import as user presets, which is deliberate — see
 
 ### 4. Verify
 
-Select your INDX printer with the right toolhead size. You should see three
-print profiles with a lock icon and twelve filaments in the dropdown.
+Select the printer preset from step 2 — not the shipping `HF0.4` one. You
+should see three print profiles with a lock icon and twelve filaments in the
+dropdown.
 
 If the print profiles don't appear, check `nozzle_diameter` really is set on
 every tool. The binding condition is
 `printer_model=~/(COREONE_INDX8T|COREONE_INDX4T)/ and nozzle_diameter[0]==<dia> and nozzle_high_flow[0]`.
+
+The profiles are read-only system presets, so nothing shows up under Print
+Settings until a printer satisfies that condition. "The bundle didn't install"
+and "no compatible printer is selected" look identical from the dropdown.
 
 ---
 
