@@ -85,10 +85,6 @@ Your PrusaSlicer data directory:
 
 ### 1. Install the print profiles
 
-> **Upgrading from `hyigerINDX06.ini`?** Delete it from `vendor/` first. Two
-> bundles containing the same preset names register as two vendors and
-> PrusaSlicer will report duplicate presets.
-
 Copy both files into the `vendor` folder of your data directory and restart.
 
 ```bash
