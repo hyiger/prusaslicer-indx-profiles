@@ -72,6 +72,8 @@ def resolve(sections, name, seen=None):
     out = collections.OrderedDict()
     for parent in [p.strip() for p in raw.get('inherits', '').split(';') if p.strip()]:
         out.update(resolve(sections, kind + ':' + parent, set(seen)))
+    # PrusaSlicer never inherits renamed_from; it belongs to one concrete preset.
+    out.pop('renamed_from', None)
     for k, v in raw.items():
         if k != 'inherits':
             out[k] = v
@@ -142,12 +144,17 @@ def main():
                 new[k] = hi[k]
                 moved.append('%s %s->%s' % (k, lo[k], hi[k]))
 
+        new.pop('renamed_from', None)  # a new preset, not a rename of the base
         new['compatible_printers_condition'] = COND_TMPL % dia
         new['compatible_printers'] = ''
         new['filament_settings_id'] = ''
-        new['filament_notes'] = (
-            '"INDX %s seed. Base: %s. MVS %g -> %g via CORE One %s (x%.2f). '
-            'Prusa nozzle ratio applied to a Bondtech CHT - re-measure MVS and PA."'
+        # Keep Prusa's own notes: the INDX start G-code reads markers such as
+        # MBL160 (Prusament TPU 95A) out of filament_notes to pick the probe temp.
+        notes = base.get('filament_notes', '""').strip('"')
+        new['filament_notes'] = '"%s%s"' % (
+            notes + '\\n' if notes else '',
+            'INDX %s seed. Base: %s. MVS %g -> %g via CORE One %s (x%.2f). '
+            'Prusa nozzle ratio applied to a Bondtech CHT - re-measure MVS and PA.'
             % (dia, mat + INDX_SUFFIX, mvs0, mvs1, label, ratio))
 
         out.append('[filament:%s @COREONEINDX HF%s]' % (mat, dia))
