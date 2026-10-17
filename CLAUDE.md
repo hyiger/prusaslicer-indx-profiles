@@ -22,15 +22,23 @@ that.
    neither is possible, the tool must **refuse** — see `derive_filaments.py`
    rejecting 0.25/0.3, and `nozzles.py` giving 0.3 no flow targets. A loud
    failure beats a plausible fabrication.
-2. **Record provenance for anything changed.** `COMMON_EDITS` in `nozzles.py`
-   carries a reason string per key. Keep that pattern.
+2. **Record provenance for anything changed.** `COMMON_EDITS` and `Nozzle.extra`
+   in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, and `TRANSFER` /
+   `RETARGET` / `DRAFT_ADOPT` in `build_printer_preset.py` all carry a reason
+   string per key, and every generator writes its changed keys and their reasons
+   into the file it emits. Keep that pattern: a new override channel without a
+   reason string is the failure mode to watch for.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
-   warning banner in stdout and a comment in the emitted bundle, and
+   warning banner in stdout and a comment in the emitted file, in the print
+   bundle, the printer presets and the high-flow filament bundles alike; and
    `STD_VALIDATED` does the same for every `--std` output. Don't quietly
    promote extrapolated numbers, and don't treat sourced as validated:
    validated means test printed.
 4. **Byline is `hyiger`.** Never use a real name in profiles, commits, README
-   or generated file headers.
+   or generated file headers. Commit as
+   `hyiger <43388146+hyiger@users.noreply.github.com>` — never a personal mail
+   address. (`0370c2f` predates this rule and still carries one; rewriting it
+   would need a force-push, so it is left alone deliberately.)
 5. **Regenerate, don't hand-edit.** `vendor/*.ini` and `filaments/*.ini` are
    build artifacts. Editing them directly desynchronises them from the tools.
 
@@ -41,15 +49,22 @@ vendor/hyigerINDX.ini      GENERATED  print profiles, all nozzle sizes
 vendor/hyigerINDX.idx      handwritten  version index
 filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
 printer/*.ini              GENERATED  flattened printer presets
+personal/*.ini             FOREIGN    exports from the Filament DB app
+personal/README.md         handwritten  why they don't import as a bundle
 tools/nozzles.py           handwritten  per-nozzle config table — start here
 tools/build_print_profiles.py  GENERATOR  vendor bundle (HF sizes, --std 0.4)
 tools/build_printer_preset.py  GENERATOR  printer presets (HF sizes, --std)
 tools/derive_filaments.py      GENERATOR  high-flow filament bundles
 tools/derive_std_filaments.py  GENERATOR  standard-nozzle filament bundles
+LICENSE                    AGPL-3.0, this repo's own work only
 ```
 
-The other `filaments/*.ini` files (Bambu_PC.ini and the like) are hand-made
-personal presets, not generator output.
+`personal/*.ini` are **not** hand-made and not derived from `PrusaResearch.ini`:
+each one is an export from the user's own Filament DB app, as its first line
+says. Non-negotiable 5 still applies, but the generator is that app — a fix
+belongs in its exporter, never in the committed file. They also carry two keys
+PrusaSlicer does not define, so they cannot be imported as a config bundle; see
+`personal/README.md`.
 
 Generated artifacts **are** committed. Users download and import them; requiring
 a local `PrusaResearch.ini` plus Python to get a usable file would defeat the
@@ -69,7 +84,16 @@ python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.4-filaments.i
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.25-filaments.ini -n 0.25
 ```
 
-The committed artifacts were generated from PrusaResearch **2.5.11**. Run the
+The committed artifacts were generated from PrusaResearch **2.5.11**. PrusaSlicer
+auto-updates that file in place, so the path above may now hold a newer release:
+check `grep -m1 ^config_version "$PR"` before regenerating. Running the recipe on
+a newer file silently re-pins every artifact to it — that is a deliberate,
+reviewable change, not a regeneration. PrusaSlicer snapshots the old bundle
+before each upgrade (`<datadir>/snapshots/<timestamp>/vendor/PrusaResearch.ini`,
+`reason = upgrade`), so point `PR` there to reproduce the committed artifacts.
+Line numbers cited in this file and the README are 2.5.11's. 2.5.12 does not shift
+them uniformly — the printer and print drafts move by 10, the `*C1INDX_*_PA*`
+sections by 36 — so re-grep the section name rather than applying an offset. Run the
 tools without `python3 -I`: they import each other from `tools/`.
 
 After any change to the generators, confirm the committed bundle is still
@@ -79,9 +103,18 @@ reproduced exactly:
 import sys; sys.path.insert(0, 'tools')
 from build_print_profiles import load, resolve
 a, b = load('/tmp/new.ini'), load('vendor/hyigerINDX.ini')
-names = [k for k in a if k.startswith('print:') and not k.startswith('print:*')]
-assert all(resolve(a, k) == resolve(b, k) for k in names)
+names = sorted({k for k in list(a) + list(b)
+                if k.startswith('print:') and not k.startswith('print:*')})
+assert all(dict(resolve(a, k)) == dict(resolve(b, k)) for k in names)
 ```
+
+Both details matter. `resolve()` returns an `OrderedDict`, whose `__eq__` is
+order sensitive, so comparing them directly fails on exactly the common-vs-tier
+shift the next paragraph calls legitimate — hence `dict()`. And taking `names`
+from both files, not just the new one, is what catches a **dropped** profile:
+with `names` from `a` alone, forgetting `--std 0.4` drops four profiles and the
+assert still passes. An added or dropped profile surfaces as
+`KeyError: <preset name>` from `resolve()` rather than as a failed assert.
 
 Compare **resolved** profiles, not raw text. Which keys sit in the hidden common
 versus the tier overrides is an implementation detail that shifts legitimately.
@@ -102,9 +135,15 @@ holds.
   `[printer_model:]` section, which is what lets it attach to Prusa's printer
   instead of cloning it.
 - **Filaments must not live in the vendor bundle.** `PresetBundle.cpp` appends
-  ` @Template` to filament preset names in a templates bundle, and `Preset.cpp`
-  hides them under the `no_templates` preference. Print presets are exempt from
-  both checks.
+  ` @Template` to filament preset names in a templates bundle, and
+  `Preset.cpp:435` hides them under the `no_templates` preference. Print presets
+  are exempt from **those two** checks — both are guarded on
+  `type == TYPE_FILAMENT`. They are *not* exempt from the third gate:
+  `PresetComboBoxes.cpp` only pushes a templates-vendor preset into a combo box
+  `if (allow_templates)` (323/335, 1138, 1419), with no type test at all, so
+  setting the `no_templates` preference hides this bundle's print profiles from
+  the sidebar and the Print Settings tab. It is off by default. Any claim that
+  print presets are simply exempt from `no_templates` is wrong.
 - **`=~` is `regex_match`, not `regex_search`.** Full-string match. So
   `COREONE_INDX8T` does **not** match `/(COREONE|COREONEOAK|...)/`, which is why
   CORE One profiles never reach an INDX printer and why Prusa's INDX conditions
@@ -128,9 +167,33 @@ holds.
   drops it the same way, and generated presets are new presets, so they never
   carry one.
 - **Prusa keeps unreleased profiles as comments.** `; [printer:...]` /
-  `; key = value` blocks in PrusaResearch.ini (the INDX 0.25 printer, the
-  `Prusament PLA/PETG @COREONEINDX 0.25` filaments). `load_drafts()` reads them.
-  They are Prusa's own intent, so they count as sourced.
+  `; key = value` blocks in PrusaResearch.ini. `load_drafts()` reads them. They
+  are Prusa's own intent, so they count as sourced. At 2.5.11 there are more than
+  the 0.25 pair this file used to name:
+  - **6 INDX printers** — 8T and 4T at `0.25`, `HF0.6`, `HF0.8`
+    (`56624-56698`). Used, two ways. The four HF drafts: `build()` applies the
+    CORE One delta, compares the result against the draft, adopts the keys in
+    `DRAFT_ADOPT` and refuses on any other disagreement. The two `0.25` drafts:
+    `build_std()` re-resolves the parent the draft names and applies every draft
+    key over it, with no `DRAFT_ADOPT` gate and no comparison — at that size
+    there is no CORE One delta, so the draft is the only INDX-specific source. The 4T `HF0.6`/`HF0.8` drafts are upstream-buggy
+    (`inherits = *C1_INDX_8T_common*`, 8-wide `nozzle_diameter` on a 4-tool
+    machine), which is why only uniform scalar values are taken and re-widened.
+  - **2 INDX 0.25 filaments** — `Prusament PLA` / `PETG`. Used as written.
+  - **10 INDX print profiles** at `HF0.5`/`HF0.6`/`HF0.8`, four / four / two
+    (`57196-57289`). Not used: the HF0.5 and HF0.6 drafts only restate the
+    unreachable 250/200 they inherit; the two HF0.8 drafts set their own
+    200 / 160-120 / 160-120 / 200-120 but leave infill at the inherited 300 (see
+    "Data model"); and the HF0.6 ladder/tier naming is taken from CORE One HF0.6
+    instead. The HF0.5 drafts' first three rungs are the 0.5 ladder `nozzles.py`
+    uses.
+  - **416 INDX filament drafts** at `HF0.5`/`HF0.6`/`HF0.8` — 135 / 144 / 137
+    sections, 144 distinct filaments (the 0.5 and 0.8 name sets are subsets of
+    0.6's). Pressure advance is taken from them where they set one; MVS is not —
+    see "Things that look wrong but aren't".
+
+  A new release can add more. Grep `^; \[` before assuming a size has no Prusa
+  source.
 - **Vendor bundles may omit keys.** Anything the chain doesn't set falls back to
   PrusaSlicer defaults. Emit only what is sourced; pinning defaults risks
   freezing a value Prusa later changes.
@@ -154,7 +217,14 @@ holds.
 All define complete geometry. Prusa's own 0.25 and 0.3 print profiles use
 theirs; the high-flow ones are still unreleased scaffolding.
 
-Only `*INDX_025_common*` has a real speed pass. The rest inherit
+Only `*INDX_025_common*` has a real speed pass. "No pass upstream" is a claim
+about the **commons**, not about Prusa's profiles: the commented `HF0.8` print
+drafts do set profile-level speeds (perimeter 200, external 160/120, small
+160/120, solid 200/120), which at that common's 0.9 mm widths, each draft at its
+own layer height, is 39-65 mm3/s, and they leave infill at the inherited 300,
+which is 75-98 mm3/s. No HF0.8 filament Prusa ships allows more than 39, and
+Prusa's own commented `Prusament PLA @COREONEINDX HF0.8` draft resolves to 36, so
+the drafted perimeter and the inherited infill are unusable. The rest inherit
 `perimeter_speed = 250` / `infill_speed = 300` from `*INDX_common*`, which at
 0.68 × 0.25 is 39–47 mm³/s and unreachable. So:
 
@@ -170,6 +240,17 @@ Filament MVS is ratio-scaled off the INDX 0.4 value using Prusa's CORE One
 `HF0.4` → `HF<dia>` pair. Non-MVS keys transfer **only** where INDX agreed with
 CORE One at 0.4 — where INDX differs it made a deliberate toolchanger choice
 that must survive.
+
+Pressure advance is the one value that is never scaled or inherited across
+sizes, because Prusa publishes it per nozzle: `*C1INDX_<FAM>_<NN>_PA*` for
+PLA/PET/ABS/PC at `04`/`05`/`06`/`08`, plus the nozzle-independent
+`*C1INDX_FLEX_PA*`. Prusa's own structure gives the mapping —
+`*PLA06HFC1INDX*` inherits `*C1INDX_PLA_06_PA*` — so `derive_filaments.py` reads
+the family section out of the HF0.4 chain and swaps the nozzle token, preferring
+a figure Prusa typed into its commented `<mat> @COREONEINDX HF<dia>` draft where
+there is one. Prusa's INDX PA **falls** as the nozzle grows (PLA 0.031 → 0.02,
+PET 0.048 → 0.031, ABS 0.02 → 0.015, PC 0.05 → 0.025), which is the opposite of
+what a CHT's longer melt path would suggest, so do not "correct" it upward.
 
 ## Conventions
 
@@ -200,8 +281,12 @@ that must survive.
 - **0.3 has no flow targets.** Extrapolating from the 0.4/0.6 anchors predicts
   ~17 mm³/s where the tuned 0.25 profile runs 3.7 — the curve collapses below
   0.4. Deliberately left underived.
-- **`derive_filaments.py` refuses 0.25 and 0.3.** Prusa publishes filament
-  variants for HF0.5, HF0.6, HF0.8 and 0.8 only. Nothing to scale against.
+- **`derive_filaments.py` refuses 0.25 and 0.3.** Prusa publishes standard
+  filament variants at 0.6 and 0.8 and high-flow ones at HF0.5, HF0.6 and HF0.8;
+  at 0.25 and 0.3 there is nothing in either family to scale against. (The
+  non-HF fallback is load-bearing, not a corner case: 9 of the 19 committed 0.6
+  presets come from an `@COREONE` -> `@COREONE 0.6` pair. At 0.5 there is no
+  plain `@COREONE 0.5`, so `-n 0.5` covers only 8 of the 19 materials.)
 - **…but `derive_std_filaments.py` builds 0.25.** It scales nothing: a
   standard 0.25 is built from Prusa's INDX 0.25 bases and drafts. The two tools
   answer different questions.
@@ -220,5 +305,30 @@ that must survive.
   reads `MBL160` / `HT_MBL10` out of `filament_notes`.
 - **`@COREONE 0.8` MVS is lower than `HF0.6`** (Prusament PLA 19 vs 30). That is
   a standard brass nozzle, not high-flow. Do not use it as a CHT 0.8 anchor.
+- **HF0.6 pressure advance is *lower* than HF0.4** (Prusament PLA 0.02 vs
+  0.038). Prusa's own per-nozzle figures go that way. See "Data model".
+- **The HF0.6 printer preset's `retract_length` is 0.7, not the 0.8 its chain
+  resolves.** Prusa's commented INDX HF0.6 printer draft says 0.7, and a draft
+  written for this nozzle on this toolchanger outranks a value inherited from the
+  HF0.4 chain. `DRAFT_ADOPT` in `build_printer_preset.py` records the decision;
+  any *unlisted* draft disagreement refuses instead.
+- **`build_printer_preset.py -n 0.8` works, but `--list` still calls 0.8
+  unvalidated.** The printer preset is fully sourced from Prusa's HF0.8 draft.
+  The *flow targets* in `nozzles.py` are still extrapolated, and neither has been
+  printed. Two different claims, both true.
+- **`min_bead_width = 90%` on the HF0.6 Draft tier** where every `@COREONE
+  HF0.6` profile says 85%. It is a deliberate transfer of Prusa's own Draft-tier
+  choice (`0.25mm Draft @COREONEINDX HF0.4`), with the reason recorded in
+  `Nozzle.extra`. HF0.6 is test printed with it.
+- **Prusa's commented HF0.6 filament drafts set an MVS that is not used.**
+  Prusament PLA drafts 30 where the ratio rule gives 35. All three divergent MVS
+  figures are typed in the draft's own body — `load_drafts()` reads nothing else,
+  so nothing inherited can reach the report — but each restates the value its
+  CORE One parent already supplies (FLEX 3.5, PLA 30, TPU 4, against INDX HF0.4
+  baselines of 2 / 28 / 2). Adopting one would swap the INDX flow baseline for the
+  CORE One one, and 35 is the test-printed value, so the ratio rule stands. (Three
+  further drafts — Prusament ASA, PC Blend CF, Generic PETG — differ only through
+  an MVS they inherit and never type, which is why the report cannot see them.) — but `derive_filaments.py` prints every divergence rather than hiding
+  it. Pressure advance is the exception: drafts win there.
 - **Binding includes `nozzle_high_flow[0]`** where upstream commons check
   diameter only. Intentional, harmless, documented in the README.

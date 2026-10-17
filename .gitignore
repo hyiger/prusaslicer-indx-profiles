@@ -1,3 +1,6 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Audit and review reports: per-iteration, never committed
+.audit-*.md

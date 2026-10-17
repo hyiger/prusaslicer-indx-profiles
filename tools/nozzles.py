@@ -5,7 +5,14 @@ Everything here is either lifted from PrusaResearch.ini or explicitly flagged as
 unvalidated. Adding a nozzle size means adding one entry below.
 
 Layer-height ladders are Prusa's own CORE One ladders for the same nozzle,
-read out of the shipping print profiles:
+read out of the shipping print profiles. Where Prusa ships both a standard and
+a high-flow variant at one diameter the basis is chosen per size, not by one
+rule. The 0.6 row is @COREONE HF0.6, the variant matching the nozzle; TIERS uses
+its first three rungs. The 0.5 row is @COREONE 0.5 rather than HF0.5, whose
+ladder has nothing below 0.20; TIERS uses 0.15/0.20/0.25, which are also exactly
+the first three rungs of Prusa's own commented @COREONEINDX HF0.5 print draft
+lineup, an INDX-specific source. At 0.8 the standard and high-flow ladders are
+identical. The 0.4 row is the INDX lineup itself:
 
     0.25    0.05  0.07  0.12  0.15
     0.3     0.12  0.16  0.20
@@ -36,7 +43,10 @@ class Nozzle:
         self.layers = layers        # (detail, balanced, draft) layer heights
         self.flow = flow            # dict of volumetric targets, or None
         self.validated = validated  # have these targets actually been printed?
-        self.extra = extra or {}    # per-profile key overrides
+        # Per-tier key overrides, {tier: {key: (value, reason)}}. The same
+        # (value, reason) shape as COMMON_EDITS: every deviation from the
+        # resolved common records why, the per-tier ones included.
+        self.extra = extra or {}
         self.note = note
         self.shipped = shipped      # Prusa's own print profiles for this size, if any
 
@@ -51,13 +61,18 @@ class Nozzle:
         return '*COREONEINDX %s*' % self.tag
 
 
-# Volumetric targets validated on 0.6 CHT toolheads. The shipping 0.4 INDX
-# profiles sit at 20-24 mm3/s; these aim modestly above that.
+# Volumetric targets validated on 0.6 CHT toolheads. Prusa's starred
+# "0.20mm Balanced @COREONEINDX HF0.4" runs 20.4 mm3/s perimeter / 24.4 infill;
+# these aim modestly above that one tier. Across its four tiers the shipping 0.4
+# lineup spans 8.6-33.5 mm3/s, the upper tiers riding the un-passed 250/300 from
+# *INDX_common*, so these are not above the whole shipping range.
 FLOW_06 = dict(perim=26.0, ext=20.0, small=18.0,
                infill=30.0, solid=27.0, top=11.3)
 
 
 def _scaled(factor):
+    """FLOW_06 scaled by one factor. Uniform, not per-key: `top` moves with the
+    rest even where the 0.4 and 0.6 anchors agree on it."""
     return {k: round(v * factor, 1) for k, v in FLOW_06.items()}
 
 
@@ -83,26 +98,49 @@ NOZZLES = {
     # Prusa renamed the high-flow commons *INDX_05_common* -> *INDX_05hf_common*
     # (likewise 0.6 and 0.8) by PrusaResearch 2.5.11.
 
-    # No upstream speed pass. Interpolated between the 0.4 anchor (20.4 perim /
-    # 24.4 infill, measured off the shipping profiles) and the 0.6 targets.
+    # No upstream speed pass, and Prusa's commented HF0.5 print drafts only
+    # restate the unreachable 250/200 they inherit. FLOW_06 is scaled by one
+    # factor, the perimeter target interpolated between the 0.4 anchor (20.4
+    # perim / 24.4 infill, measured off Prusa's 0.20mm Balanced profile) and the
+    # 0.6 target. Being uniform, that leaves `top` at 10.0 although both anchors
+    # say 11.3 - low, so safe, but not an interpolation of that key.
     '0.5': Nozzle('0.5', '*INDX_05hf_common*', (0.15, 0.20, 0.25),
                   flow=_scaled(23.0 / 26.0), validated=False,
-                  note='targets interpolated between the 0.4 and 0.6 anchors'),
+                  note='FLOW_06 scaled by the interpolated perimeter ratio '
+                       '23/26; top not re-anchored'),
 
     '0.6': Nozzle('0.6', '*INDX_06hf_common*', (0.20, 0.25, 0.32),
                   flow=FLOW_06, validated=True,
-                  extra={'draft': {'min_bead_width': '90%'},
-                         'detail': {'top_solid_layers': '5',
-                                    'bottom_solid_layers': '4'}},
-                  note='geometry sourced verbatim; speeds derived and in use'),
+                  extra={'draft': {'min_bead_width': (
+                             '90%', "Prusa's own Draft tier uses 90% "
+                             '(0.25mm Draft @COREONEINDX HF0.4); a deliberate '
+                             'transfer of that tier choice, not the 85% every '
+                             '@COREONE HF0.6 profile carries')},
+                         'detail': {'top_solid_layers': (
+                                        '5', 'matches Prusa 0.20mm BALANCED '
+                                        '@COREONE HF0.6'),
+                                    'bottom_solid_layers': (
+                                        '4', 'matches Prusa 0.20mm BALANCED '
+                                        '@COREONE HF0.6')}},
+                  note='common sourced verbatim; the speeds and three per-tier '
+                       'overrides are this repo\'s, each with a reason'),
 
-    # No upstream speed pass. Prusa's own @COREONE 0.8 MVS figures are for a
-    # standard brass nozzle (Prusament PLA = 19, BELOW the HF0.6 figure of 30)
-    # and do not transfer to a high-flow CHT, so these are extrapolated.
+    # *INDX_08hf_common* sets no main speed keys. Prusa's two commented
+    # "@COREONEINDX HF0.8" print drafts DO set profile-level speeds (perimeter
+    # 200, external 160/120, small 160/120, solid 200/120), which at the 0.9 mm
+    # widths in that common, each draft at its own layer height, is 39-65 mm3/s;
+    # and they leave infill at the inherited 300, which is 75-98 mm3/s. Prusa's
+    # own commented Prusament PLA @COREONEINDX HF0.8 draft resolves to an MVS of
+    # 36 (it types none; 36 comes from Prusament PLA @COREONE HF0.8), and the
+    # perimeter at the 0.40 mm layer (65) and the inherited infill blow straight
+    # past it, so they are not used. Prusa's own @COREONE 0.8 MVS figures are for
+    # a standard brass nozzle (Prusament PLA = 19, BELOW the HF0.6 figure of 30)
+    # and do not transfer to a high-flow CHT either, so these are extrapolated.
     '0.8': Nozzle('0.8', '*INDX_08hf_common*', (0.30, 0.40, 0.55),
                   flow=_scaled(32.0 / 26.0), validated=False,
                   note='targets extrapolated past the 0.6 anchor; the upstream '
-                       '0.8 MVS data is non-high-flow and unusable here'),
+                       '0.8 MVS data is non-high-flow and the drafted 0.8 speeds '
+                       'imply 39-65 mm3/s, so neither is usable here'),
 }
 
 # Standard (non-high-flow) nozzles. Every value is Prusa's own, but sourced is
@@ -121,7 +159,11 @@ TIERS = [('detail', 'Detail', 0), ('balanced', 'Balanced \u2605', 1),
 # Edits applied to every generated common, with the reason recorded.
 COMMON_EDITS = {
     'bridge_speed': ('30', 'inherited 50 is ~14 mm3/s at a 0.6 bridge'),
-    'interlocking_beam_width': (None, 'set to 2x nozzle; 0.8 is too narrow past 0.4'),
+    'interlocking_beam_width': (None, 'introduced, not overridden: the chain '
+                                'leaves it unset and PrusaSlicer defaults it to '
+                                '0.8, too narrow past 0.4. Set to 2x nozzle. '
+                                'Inert unless interlocking beams are enabled, '
+                                'and not applied on the --std path'),
     'print_settings_id': ('', 'system preset hygiene'),
     'notes': ('', 'system preset hygiene'),
     'compatible_printers': ('', 'condition-based binding only'),
