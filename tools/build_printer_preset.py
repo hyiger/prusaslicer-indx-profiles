@@ -50,7 +50,7 @@ import os
 import sys
 
 from build_print_profiles import load, load_drafts, resolve
-from nozzles import NOZZLES
+from nozzles import NOZZLES, STD_VALIDATED
 
 BYLINE = 'hyiger'
 
@@ -272,7 +272,7 @@ def main():
             if a.std:
                 cfg, changed = build_std(vendor, drafts, dia, model, report)
                 name = 'Prusa CORE One INDX %s %s nozzle' % (model, dia)
-                validated = True  # nothing derived: Prusa's own values only
+                validated = STD_VALIDATED.get(dia, False)  # sourced, not yet printed
                 note = ('Standard (non-high-flow) nozzle. Source: ' +
                         ('the CORE One HF0.4 -> %s pair.' % dia if dia in STD_PAIR else
                          'Prusa\'s commented-out INDX %s draft, not yet released '

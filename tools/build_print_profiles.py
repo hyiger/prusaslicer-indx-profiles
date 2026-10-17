@@ -34,7 +34,7 @@ import io
 import re
 import sys
 
-from nozzles import NOZZLES, TIERS, COMMON_EDITS, speed_for
+from nozzles import NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, speed_for
 
 BUNDLE_NAME = 'hyiger INDX'
 BUNDLE_VERSION = '0.4.0'
@@ -267,6 +267,8 @@ def main():
         w('\n# ---- %s mm standard nozzle : Prusa\'s "%s" prints, binding\n'
           '#      changed from nozzle_high_flow[0] to ! nozzle_high_flow[0]\n'
           % (dia, STD_SOURCE[dia]))
+        if not STD_VALIDATED.get(dia, False):
+            w('# UNVALIDATED: not yet test printed on a standard %s mm INDX nozzle.\n' % dia)
         w('\n[print:%s]\n' % hidden)
         for k in sorted(common):
             w('%s = %s\n' % (k, common[k]))
@@ -288,8 +290,11 @@ def main():
             print('  !! UNVALIDATED: %s' % noz.note)
         for n in names:
             print('     %s' % n)
-    for label, names, common in std_report:
+    for dia, (label, names, common) in zip(sorted(set(args.stds), key=float), std_report):
         print('\n%s  <- Prusa\'s own profiles, rebound   %d shared keys' % (label, len(common)))
+        if not STD_VALIDATED.get(dia, False):
+            warn = True
+            print('  !! UNVALIDATED: not yet test printed on a standard nozzle')
         for n in names:
             print('     %s' % n)
     if warn:

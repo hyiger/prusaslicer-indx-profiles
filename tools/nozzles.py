@@ -105,6 +105,14 @@ NOZZLES = {
                        '0.8 MVS data is non-high-flow and unusable here'),
 }
 
+# Standard (non-high-flow) nozzles. Every value is Prusa's own, but sourced is
+# not the same as printed: flip a size to True only once it has been test
+# printed on an INDX. Drives the UNVALIDATED banner in all three --std outputs.
+STD_VALIDATED = {
+    '0.4': False,   # Prusa's HF0.4 prints and the CORE One HF0.4 -> 0.4 delta
+    '0.25': False,  # Prusa's unreleased INDX 0.25 draft and 0.25 bases
+}
+
 # The three profiles emitted per nozzle. The star marks the recommended
 # default, matching Prusa's own convention.
 TIERS = [('detail', 'Detail', 0), ('balanced', 'Balanced \u2605', 1),

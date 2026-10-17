@@ -15,8 +15,8 @@ reset-to-system-value arrows, no clutter in your own preset list.
 **Currently built:**
 
 - **HF0.6**: high-flow 0.6 mm (Bondtech CHT).
-- **0.4 standard**: a standard (non-high-flow) 0.4 mm nozzle.
-- **0.25 standard**: a standard 0.25 mm nozzle, using Prusa's own 0.25 print profiles.
+- **0.4 standard**: a standard (non-high-flow) 0.4 mm nozzle. Not yet test printed.
+- **0.25 standard**: a standard 0.25 mm nozzle, using Prusa's own 0.25 print profiles. Not yet test printed.
 
 The generators handle other high-flow sizes too; see
 [Adding a nozzle size](#adding-a-nozzle-size).
@@ -530,7 +530,9 @@ filaments ship as an importable config bundle.
 
 - **Speeds are derived, not sourced.** If Prusa completes the speed pass on the
   per-nozzle commons, prefer theirs.
-- **Only 0.6 is validated.** 0.5 and 0.8 targets are extrapolated. The 0.8 case
+- **Only HF0.6 is validated.** The standard 0.4 and 0.25 values are all
+  Prusa's, but sourced is not printed: they carry an UNVALIDATED banner until
+  test printed on an INDX. 0.5 and 0.8 targets are extrapolated. The 0.8 case
   is weakest: Prusa's `@COREONE 0.8` MVS figures are for a standard brass nozzle
   (Prusament PLA = 19, *below* the HF0.6 figure of 30) and don't transfer to a
   high-flow CHT.

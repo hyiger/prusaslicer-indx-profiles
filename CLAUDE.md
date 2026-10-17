@@ -25,8 +25,10 @@ that.
 2. **Record provenance for anything changed.** `COMMON_EDITS` in `nozzles.py`
    carries a reason string per key. Keep that pattern.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
-   warning banner in stdout and a comment in the emitted bundle. Don't quietly
-   promote extrapolated numbers.
+   warning banner in stdout and a comment in the emitted bundle, and
+   `STD_VALIDATED` does the same for every `--std` output. Don't quietly
+   promote extrapolated numbers, and don't treat sourced as validated:
+   validated means test printed.
 4. **Byline is `hyiger`.** Never use a real name in profiles, commits, README
    or generated file headers.
 5. **Regenerate, don't hand-edit.** `vendor/*.ini` and `filaments/*.ini` are
