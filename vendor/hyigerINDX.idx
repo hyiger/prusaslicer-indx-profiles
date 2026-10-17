@@ -1,5 +1,6 @@
-min_slic3r_version = 2.9.0-alpha0
+min_slic3r_version = 2.9.6
 0.4.0 Standard (non-high-flow) 0.4 mm print profiles; rebuilt on PrusaResearch 2.5.11
+min_slic3r_version = 2.9.0-alpha0
 0.3.0 Generalised to any INDX nozzle size; bundle renamed from hyigerINDX06
 0.2.0 Rebuilt on Prusa per-nozzle commons (PrusaResearch 2.5.5)
 0.1.0 Initial 0.6 mm CHT print profiles
