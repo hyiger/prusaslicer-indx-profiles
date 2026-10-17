@@ -6,8 +6,10 @@ file is for whoever edits the code.
 ## What this is
 
 PrusaSlicer profiles for Prusa CORE One INDX toolheads at nozzle sizes Prusa
-doesn't ship. Print profiles install as read-only **system presets** via a
-vendor bundle; filament presets ship as an importable config bundle.
+doesn't ship: high-flow sizes (HF0.6) and standard, non-high-flow nozzles
+(0.4 and 0.25). Print profiles install as read-only **system presets** via a
+vendor bundle; filament presets ship as an importable config bundle; printer
+presets ship as flattened user presets.
 
 Nearly everything is **generated** from Prusa's own `PrusaResearch.ini`. The
 value of this repo is its provenance discipline, not its cleverness. Preserve
@@ -35,11 +37,17 @@ that.
 ```
 vendor/hyigerINDX.ini      GENERATED  print profiles, all nozzle sizes
 vendor/hyigerINDX.idx      handwritten  version index
-filaments/*.ini            GENERATED  one bundle per nozzle size
+filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
+printer/*.ini              GENERATED  flattened printer presets
 tools/nozzles.py           handwritten  per-nozzle config table — start here
-tools/build_print_profiles.py  GENERATOR
-tools/derive_filaments.py      GENERATOR
+tools/build_print_profiles.py  GENERATOR  vendor bundle (HF sizes, --std 0.4)
+tools/build_printer_preset.py  GENERATOR  printer presets (HF sizes, --std)
+tools/derive_filaments.py      GENERATOR  high-flow filament bundles
+tools/derive_std_filaments.py  GENERATOR  standard-nozzle filament bundles
 ```
+
+The other `filaments/*.ini` files (Bambu_PC.ini and the like) are hand-made
+personal presets, not generator output.
 
 Generated artifacts **are** committed. Users download and import them; requiring
 a local `PrusaResearch.ini` plus Python to get a usable file would defeat the
@@ -51,9 +59,16 @@ purpose.
 PR=~/Library/Application\ Support/PrusaSlicer/vendor/PrusaResearch.ini
 
 python3 tools/build_print_profiles.py "$PR" /dev/null --list
-python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6
+python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 --std 0.4
+python3 tools/build_printer_preset.py "$PR" printer -n 0.6
+python3 tools/build_printer_preset.py "$PR" printer -n 0.4 -n 0.25 --std
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.6-filaments.ini -n 0.6
+python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.4-filaments.ini -n 0.4
+python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.25-filaments.ini -n 0.25
 ```
+
+The committed artifacts were generated from PrusaResearch **2.5.11**. Run the
+tools without `python3 -I`: they import each other from `tools/`.
 
 After any change to the generators, confirm the committed bundle is still
 reproduced exactly:
@@ -74,7 +89,7 @@ versus the tier overrides is an implementation detail that shifts legitimately.
 Verified against the `version_2.9.6` tag. Re-check before assuming any still
 holds.
 
-- **Inheritance never crosses bundle files.** `*INDX_06_common*` lives in
+- **Inheritance never crosses bundle files.** `*INDX_06hf_common*` lives in
   `PrusaResearch.ini` and cannot be referenced from ours, so it is resolved and
   embedded. This is why the generators exist at all.
 - **`templates_profile = 1` is load-bearing.** `Preset.cpp` rejects a preset
@@ -100,9 +115,20 @@ holds.
 - **User preset files on disk must be fully flattened.** `load_presets` does
   `preset.config = default_preset.config; preset.config.apply(config)` — it
   applies over PrusaSlicer defaults, *not* over the `inherits` parent. A
-  delta-only user preset silently gets wrong values. Config *bundles* are
-  different: `flatten_configbundle_hierarchy` resolves `inherits` against
-  installed presets, so `inherits` in an importable bundle is fine.
+  delta-only user preset silently gets wrong values. Config *bundles* are no
+  different for installed parents: `flatten_configbundle_hierarchy` resolves
+  `inherits` only between sections of the same file, and `load_configbundle`
+  then loads each section as defaults plus its own keys. An `inherits` naming
+  an installed system preset is kept as the link but never applied, so bundle
+  sections must be flattened too, as every generator here does.
+- **`renamed_from` is never inherited.** `flatten_configbundle_hierarchy`
+  skips it when merging parents: it belongs to one concrete preset. `resolve()`
+  drops it the same way, and generated presets are new presets, so they never
+  carry one.
+- **Prusa keeps unreleased profiles as comments.** `; [printer:...]` /
+  `; key = value` blocks in PrusaResearch.ini (the INDX 0.25 printer, the
+  `Prusament PLA/PETG @COREONEINDX 0.25` filaments). `load_drafts()` reads them.
+  They are Prusa's own intent, so they count as sourced.
 - **Vendor bundles may omit keys.** Anything the chain doesn't set falls back to
   PrusaSlicer defaults. Emit only what is sourced; pinning defaults risks
   freezing a value Prusa later changes.
@@ -122,8 +148,9 @@ holds.
 ## Data model
 
 `PrusaResearch.ini` contains per-nozzle INDX commons for 0.25 / 0.3 / 0.5 / 0.6
-/ 0.8. All define complete geometry. None are referenced by any profile and no
-variant declares them — unreleased scaffolding.
+/ 0.8 (the high-flow ones named `*INDX_05hf_common*` and so on since 2.5.11).
+All define complete geometry. Prusa's own 0.25 and 0.3 print profiles use
+theirs; the high-flow ones are still unreleased scaffolding.
 
 Only `*INDX_025_common*` has a real speed pass. The rest inherit
 `perimeter_speed = 250` / `infill_speed = 300` from `*INDX_common*`, which at
@@ -145,7 +172,9 @@ that must survive.
 ## Conventions
 
 - Profile names: `<layer>mm <Tier> @COREONEINDX HF<dia>`, layer height to two
-  decimals (`0.20mm`, not `0.2mm`). Prusa's format.
+  decimals (`0.20mm`, not `0.2mm`). Prusa's format. Standard nozzles drop the
+  `HF`: `@COREONEINDX 0.4`, `Prusa CORE One INDX 8T 0.4 nozzle`, as Prusa names
+  its own STD variants.
 - The star `★` marks the **recommended default only** — one per nozzle size, on
   Balanced. It is not a decoration for every profile.
 - Hidden parents use asterisks: `*COREONEINDX HF0.6*`. PrusaSlicer strips these
@@ -171,6 +200,22 @@ that must survive.
   0.4. Deliberately left underived.
 - **`derive_filaments.py` refuses 0.25 and 0.3.** Prusa publishes filament
   variants for HF0.5, HF0.6, HF0.8 and 0.8 only. Nothing to scale against.
+- **…but `derive_std_filaments.py` builds 0.25.** It scales nothing: a
+  standard 0.25 is built from Prusa's INDX 0.25 bases and drafts. The two tools
+  answer different questions.
+- **`build_print_profiles.py` refuses 0.25 and 0.3.** Prusa ships print
+  profiles for both (`shipped` in `nozzles.py`); building them would duplicate
+  Prusa's.
+- **Standard 0.4 prints bind on `! nozzle_high_flow[0]`, HF0.6 on diameter
+  only.** Without the flag the standard copies would appear on Prusa's HF0.4
+  printer next to Prusa's own identical profiles.
+- **Printer layer G-code differs from Prusa's in one place.** The PET-family
+  dock-fan check is `=~/(PET|CPE|PCTG).*/`, because Prusa's `/(PET|CPE|PCTG)/`
+  never matches `PETG` (full-string `regex_match`). Reported upstream as
+  prusa3d/PrusaSlicer-settings-prusa-fff#50; `DOCK_FAN` in
+  `build_printer_preset.py`, which goes quiet once Prusa changes the pattern.
+- **Filament notes are appended to, never replaced.** The INDX start G-code
+  reads `MBL160` / `HT_MBL10` out of `filament_notes`.
 - **`@COREONE 0.8` MVS is lower than `HF0.6`** (Prusament PLA 19 vs 30). That is
   a standard brass nozzle, not high-flow. Do not use it as a CHT 0.8 anchor.
 - **Binding includes `nozzle_high_flow[0]`** where upstream commons check

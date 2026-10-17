@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Build a PrusaSlicer system vendor bundle of print profiles for the Prusa
-CORE One INDX, for any nozzle size Prusa has defined a common for.
+CORE One INDX, for nozzle sizes Prusa does not ship print profiles for.
 
-Prusa ships INDX profiles for 0.4 mm only - `variants = HF0.4` is the whole
-list for both INDX models. But PrusaResearch.ini already contains per-nozzle
-commons for 0.25 / 0.3 / 0.5 / 0.6 / 0.8, complete with widths, solid-layer
-counts, support parameters and infill anchors. They are unreleased scaffolding:
-nothing inherits from them and no variant declares them.
+Prusa's only INDX printer variant is `HF0.4`. It ships print profiles for HF0.4
+and, since PrusaResearch 2.5.x, for 0.25 and 0.3 as well. PrusaResearch.ini
+also contains high-flow commons for 0.5 / 0.6 / 0.8 (`*INDX_06hf_common*` and
+so on), complete with widths, solid-layer counts, support parameters and infill
+anchors, that no released profile inherits from.
 
 This resolves the requested commons and emits them as usable profiles.
 
@@ -16,8 +16,17 @@ a speed pass on the size-specific common - see tools/nozzles.py. Inheritance
 cannot cross bundle files, so values are embedded rather than referenced. Keys
 the chain does not set are left to PrusaSlicer's defaults, as upstream does.
 
+--std 0.4 adds profiles for a standard (non-high-flow) 0.4 mm nozzle. Prusa's
+four INDX HF0.4 prints all bind on `nozzle_high_flow[0]`, so a standard 0.4
+toolhead gets no print profile at all. They are re-emitted unchanged except for
+that binding, which becomes `! nozzle_high_flow[0]`. The filament's max
+volumetric speed (see derive_std_filaments.py) is what slows a standard nozzle
+down, exactly as on Prusa's CORE One, whose STD and HF0.4 prints differ by only
+a few speeds.
+
     python3 build_print_profiles.py PrusaResearch.ini out.ini --nozzle 0.6
     python3 build_print_profiles.py PrusaResearch.ini out.ini -n 0.6 -n 0.8
+    python3 build_print_profiles.py PrusaResearch.ini out.ini -n 0.6 --std 0.4
 """
 import argparse
 import collections
@@ -28,7 +37,17 @@ import sys
 from nozzles import NOZZLES, TIERS, COMMON_EDITS, speed_for
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.3.0'
+BUNDLE_VERSION = '0.4.0'
+
+# Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
+STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}
+STD_BIND = ('nozzle_diameter[0]==%s and nozzle_high_flow[0]',
+            'nozzle_diameter[0]==%s and ! nozzle_high_flow[0]')
+# Edits applied to every standard-nozzle profile, with the reason recorded.
+STD_EDITS = {
+    'print_settings_id': ('', 'system preset hygiene'),
+    'compatible_printers': ('', 'condition-based binding only'),
+}
 
 
 def load(path):
@@ -49,6 +68,24 @@ def load(path):
     return sections
 
 
+def load_drafts(path):
+    """Prusa's commented-out sections ("; [printer:...]" then "; key = value"),
+    uncommented. They are Prusa's unreleased profiles, e.g. INDX 0.25."""
+    drafts, cur = collections.OrderedDict(), None
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            s = line.rstrip('\n')
+            m = re.match(r'^;\s*\[(\w+:.+)\]\s*$', s)
+            if m:
+                cur = drafts.setdefault(m.group(1), collections.OrderedDict())
+            elif cur is not None and s.startswith('; ') and '=' in s:
+                k, v = s[2:].split('=', 1)
+                cur[k.strip()] = v.strip()
+            else:
+                cur = None
+    return drafts
+
+
 def resolve(sections, name, seen=None):
     seen = set() if seen is None else seen
     if name in seen:
@@ -61,6 +98,8 @@ def resolve(sections, name, seen=None):
     out = collections.OrderedDict()
     for parent in [p.strip() for p in raw.get('inherits', '').split(';') if p.strip()]:
         out.update(resolve(sections, kind + ':' + parent, set(seen)))
+    # PrusaSlicer never inherits renamed_from; it belongs to one concrete preset.
+    out.pop('renamed_from', None)
     for k, v in raw.items():
         if k != 'inherits':
             out[k] = v
@@ -107,6 +146,38 @@ def build_nozzle(vendor, noz, report):
     return common, variants
 
 
+def build_std(vendor, dia, report):
+    """Prusa's HF<dia> INDX prints, rebound to a standard nozzle of the same size."""
+    suffix = STD_SOURCE[dia]
+    sources = [k for k in vendor if k.startswith('print:') and k.endswith(' ' + suffix)]
+    if not sources:
+        raise SystemExit('refusing: no "%s" print profiles in PrusaResearch.ini' % suffix)
+
+    hf_bind, std_bind = STD_BIND[0] % dia, STD_BIND[1] % dia
+    profiles = collections.OrderedDict()
+    for key in sources:
+        r = collections.OrderedDict(resolve(vendor, key))
+        cond = r.get('compatible_printers_condition', '')
+        if cond.count(hf_bind) != 1:
+            raise SystemExit('refusing: %s binds with %r, not on %r; the rebinding '
+                             'needs a human decision' % (key, cond, hf_bind))
+        r['compatible_printers_condition'] = cond.replace(hf_bind, std_bind)
+        for k, (val, _why) in STD_EDITS.items():
+            r[k] = val
+        r.pop('renamed_from', None)
+        name = key[len('print:'):-len(suffix)] + '@COREONEINDX ' + dia
+        profiles[name] = r
+
+    first = next(iter(profiles.values()))
+    common = collections.OrderedDict(
+        (k, v) for k, v in first.items() if all(p.get(k) == v for p in profiles.values()))
+    variants = collections.OrderedDict(
+        (n, collections.OrderedDict((k, v) for k, v in p.items() if k not in common))
+        for n, p in profiles.items())
+    report.append(('%s (standard)' % dia, list(variants), common))
+    return common, variants
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -114,6 +185,9 @@ def main():
     ap.add_argument('out', help='output vendor bundle .ini')
     ap.add_argument('-n', '--nozzle', action='append', dest='nozzles',
                     metavar='DIA', help='nozzle size; repeatable (default: 0.6)')
+    ap.add_argument('--std', action='append', dest='stds', default=[], metavar='DIA',
+                    help='also emit standard (non-HF) nozzle profiles; repeatable '
+                         '(known: %s)' % ', '.join(sorted(STD_SOURCE)))
     ap.add_argument('--list', action='store_true', help='list known sizes and exit')
     args = ap.parse_args()
 
@@ -123,9 +197,14 @@ def main():
             status = 'validated' if n.validated else 'UNVALIDATED'
             if n.flow is None and not n.validated:
                 status = 'NO TARGETS - speeds untouched'
+            if n.shipped:
+                status = 'SHIPPED BY PRUSA - not built'
             print('%-6s %-22s %-22s %s' % (
                 d, n.common, '/'.join('%.2f' % x for x in n.layers), status))
-            print('%-6s %s' % ('', '  ' + n.note))
+            print('%-6s %s' % ('', '  ' + (n.shipped or n.note)))
+        for d, suffix in sorted(STD_SOURCE.items()):
+            print('%-6s %-22s %-22s %s' % (d + ' STD', suffix, 'as Prusa HF' + d,
+                                           'rebinding of Prusa\'s own profiles'))
         return 0
 
     wanted = args.nozzles or ['0.6']
@@ -134,6 +213,16 @@ def main():
         sys.exit('unknown nozzle size(s): %s\nknown: %s\n(0.2 is not an INDX '
                  'size - the smallest Prusa defines is 0.25)'
                  % (', '.join(unknown), ', '.join(sorted(NOZZLES))))
+    shipped = [d for d in wanted if NOZZLES[d].shipped]
+    if shipped:
+        sys.exit('refusing: Prusa ships print profiles for %s mm itself (%s). '
+                 'Building them here would only duplicate Prusa\'s.'
+                 % (', '.join(shipped), '; '.join(NOZZLES[d].shipped for d in shipped)))
+    bad_std = [d for d in args.stds if d not in STD_SOURCE]
+    if bad_std:
+        sys.exit('refusing --std %s: only %s has Prusa high-flow prints to rebind. '
+                 'Prusa\'s 0.25 and 0.3 INDX prints already bind on diameter alone.'
+                 % (', '.join(bad_std), ', '.join(sorted(STD_SOURCE))))
 
     vendor = load(args.vendor)
     version = vendor.get('vendor', {}).get('config_version', '?')
@@ -142,7 +231,9 @@ def main():
     w = buf.write
     w('# Print profiles for the Prusa CORE One INDX (8T / 4T), by hyiger.\n')
     w('# Generated by tools/build_print_profiles.py from PrusaResearch.ini\n')
-    w('# config_version %s. Geometry comes from Prusa per-nozzle commons.\n' % version)
+    w('# config_version %s. Geometry comes from Prusa per-nozzle commons;\n' % version)
+    w('# standard-nozzle (STD) profiles are Prusa\'s HF ones of the same size,\n')
+    w('# rebound to a non-high-flow nozzle.\n')
     w('#\n')
     w('# Install: copy this file and the .idx into <datadir>/vendor/\n')
     w('# templates_profile = 1 lets these attach to the Prusa-vendor INDX\n')
@@ -169,6 +260,22 @@ def main():
             for k in sorted(over):
                 w('%s = %s\n' % (k, over[k]))
 
+    std_report = []
+    for dia in sorted(set(args.stds), key=float):
+        common, variants = build_std(vendor, dia, std_report)
+        hidden = '*COREONEINDX %s*' % dia
+        w('\n# ---- %s mm standard nozzle : Prusa\'s "%s" prints, binding\n'
+          '#      changed from nozzle_high_flow[0] to ! nozzle_high_flow[0]\n'
+          % (dia, STD_SOURCE[dia]))
+        w('\n[print:%s]\n' % hidden)
+        for k in sorted(common):
+            w('%s = %s\n' % (k, common[k]))
+        for name, over in variants.items():
+            w('\n[print:%s]\n' % name)
+            w('inherits = %s\n' % hidden)
+            for k in sorted(over):
+                w('%s = %s\n' % (k, over[k]))
+
     with open(args.out, 'w', encoding='utf-8') as f:
         f.write(buf.getvalue())
 
@@ -179,6 +286,10 @@ def main():
         if not noz.validated:
             warn = True
             print('  !! UNVALIDATED: %s' % noz.note)
+        for n in names:
+            print('     %s' % n)
+    for label, names, common in std_report:
+        print('\n%s  <- Prusa\'s own profiles, rebound   %d shared keys' % (label, len(common)))
         for n in names:
             print('     %s' % n)
     if warn:

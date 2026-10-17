@@ -30,18 +30,20 @@ def speed_for(q, w, h, round_to=5):
 
 class Nozzle:
     def __init__(self, dia, common, layers, flow=None, validated=False,
-                 extra=None, note=''):
+                 extra=None, note='', shipped=None):
         self.dia = dia              # nozzle diameter, e.g. '0.6'
-        self.common = common        # upstream section, e.g. '*INDX_06_common*'
+        self.common = common        # upstream section, e.g. '*INDX_06hf_common*'
         self.layers = layers        # (detail, balanced, draft) layer heights
         self.flow = flow            # dict of volumetric targets, or None
         self.validated = validated  # have these targets actually been printed?
         self.extra = extra or {}    # per-profile key overrides
         self.note = note
+        self.shipped = shipped      # Prusa's own print profiles for this size, if any
 
     @property
     def tag(self):
-        """Preset-name suffix, e.g. 'HF0.6'. Every INDX toolhead is high flow."""
+        """Preset-name suffix for the high-flow sizes built here, e.g. 'HF0.6'.
+        Standard (non-HF) nozzles are handled separately: see --std."""
         return 'HF' + self.dia
 
     @property
@@ -60,26 +62,34 @@ def _scaled(factor):
 
 
 NOZZLES = {
-    # Prusa already did a full speed pass on *INDX_025_common* (perimeter 150,
-    # infill 100, perimeters 3, 11/8 solid layers). Nothing to derive.
+    # Prusa did a full speed pass on *INDX_025_common* (perimeter 150, infill
+    # 100, perimeters 3, 11/8 solid layers) and, since PrusaResearch 2.5.x,
+    # ships its own "@COREONEINDX 0.25" print profiles built on it. Building
+    # them here would only duplicate Prusa's, so the generator refuses.
     '0.25': Nozzle('0.25', '*INDX_025_common*', (0.07, 0.12, 0.15),
                    flow=None, validated=True,
-                   note='upstream speed pass present; speeds left untouched'),
+                   note='upstream speed pass present; speeds left untouched',
+                   shipped='0.07mm Extra Fine / 0.10mm Fine ★ / 0.15mm Detail @COREONEINDX 0.25'),
 
-    # No upstream speed pass. Linear extrapolation from the 0.4/0.6 anchors
-    # collapses below 0.4, so no targets are supplied - measure first.
+    # Prusa ships "@COREONEINDX 0.3" print profiles since PrusaResearch 2.5.x.
+    # Before that there was no upstream speed pass, and linear extrapolation
+    # from the 0.4/0.6 anchors collapses below 0.4, so none was derived here.
     '0.3': Nozzle('0.3', '*INDX_03_common*', (0.12, 0.16, 0.20),
                   flow=None, validated=False,
                   note='NO upstream speed pass and no trustworthy targets; '
-                       'inherits 250/300 from the 0.4 chain until measured'),
+                       'inherits 250/300 from the 0.4 chain until measured',
+                  shipped='0.10mm Fine / 0.15mm Detail ★ / 0.20mm Balanced @COREONEINDX 0.3'),
+
+    # Prusa renamed the high-flow commons *INDX_05_common* -> *INDX_05hf_common*
+    # (likewise 0.6 and 0.8) by PrusaResearch 2.5.11.
 
     # No upstream speed pass. Interpolated between the 0.4 anchor (20.4 perim /
     # 24.4 infill, measured off the shipping profiles) and the 0.6 targets.
-    '0.5': Nozzle('0.5', '*INDX_05_common*', (0.15, 0.20, 0.25),
+    '0.5': Nozzle('0.5', '*INDX_05hf_common*', (0.15, 0.20, 0.25),
                   flow=_scaled(23.0 / 26.0), validated=False,
                   note='targets interpolated between the 0.4 and 0.6 anchors'),
 
-    '0.6': Nozzle('0.6', '*INDX_06_common*', (0.20, 0.25, 0.32),
+    '0.6': Nozzle('0.6', '*INDX_06hf_common*', (0.20, 0.25, 0.32),
                   flow=FLOW_06, validated=True,
                   extra={'draft': {'min_bead_width': '90%'},
                          'detail': {'top_solid_layers': '5',
@@ -89,7 +99,7 @@ NOZZLES = {
     # No upstream speed pass. Prusa's own @COREONE 0.8 MVS figures are for a
     # standard brass nozzle (Prusament PLA = 19, BELOW the HF0.6 figure of 30)
     # and do not transfer to a high-flow CHT, so these are extrapolated.
-    '0.8': Nozzle('0.8', '*INDX_08_common*', (0.30, 0.40, 0.55),
+    '0.8': Nozzle('0.8', '*INDX_08hf_common*', (0.30, 0.40, 0.55),
                   flow=_scaled(32.0 / 26.0), validated=False,
                   note='targets extrapolated past the 0.6 anchor; the upstream '
                        '0.8 MVS data is non-high-flow and unusable here'),
