@@ -110,8 +110,9 @@ def printer_models(cond):
     """The leading `printer_model=~/(...)/` clause of a compatible_printers_condition.
 
     Prusa scopes INDX filaments per family (since 2.5.12 the ABS, PC and PA ones
-    leave out the CORE One L, which gets its own chamber values), so a derived
-    preset keeps its base's clause rather than a fixed list of models."""
+    leave out the CORE One L INDX, for which Prusa has only staged chamber
+    values; there is no L INDX printer yet), so a derived preset keeps its
+    base's clause rather than a fixed list of models."""
     m = re.match(r'\s*(printer_model\s*=~\s*/[^/]*/)', cond or '')
     if not m:
         raise SystemExit('refusing: no printer_model clause to keep in %r' % (cond or '')[:80])

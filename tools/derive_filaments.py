@@ -42,8 +42,9 @@ Four rules:
     COMMON_ADOPT, each with its reason, are taken. A changed key outside it, a
     per-nozzle common that drops a shared key, a toolchanger key set after the
     common, or a missing or ambiguous family all refuse.
-  * every other key takes the CORE One <dia> value ONLY if INDX agreed with
-    CORE One at 0.4. Where INDX already differs it made a deliberate
+  * of the other keys, only those in TRANSFER take the CORE One <dia> value,
+    and ONLY if INDX agreed with CORE One at 0.4; any other key keeps the INDX
+    0.4 value. Where INDX already differs it made a deliberate
     toolchanger-specific choice, so that choice is preserved.
 
 Each preset keeps its base's printer_model clause (see printer_models()), so it
