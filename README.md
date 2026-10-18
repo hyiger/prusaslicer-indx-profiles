@@ -502,10 +502,17 @@ Three rules, beside the pressure advance described under
   `filament_retract_restart_extra_toolchange` 0.04 (0.05 at 0.8). They arrived
   together with a toolchange G-code that no longer adds a fixed 0.04 mm to its
   post-toolchange retract, and which still records `retract_length +
-  retract_restart_extra_toolchange` as retracted. Each key is applied wherever
-  the 0.4 preset took the shared common's value, so Generic FLEX and Prusament
-  TPU 95A keep their own purge of 15 (Prusa's HF0.6 drafts for them resolve to
-  14).
+  retract_restart_extra_toolchange` as retracted. Most of Prusa's HF0.6 drafts
+  inherit a sized INDX family section in place of the 0.4 one
+  (`*PLAHFC1INDX*` → `*PLA06HFC1INDX*`), so the generator re-resolves each INDX
+  0.4 preset with its family swapped that way and takes these keys from that
+  chain. A value the 0.4 preset sets in its own body is kept, as an own
+  override, whether or not it agreed with anything: Generic FLEX and Prusament
+  TPU 95A keep their own purge of 15, where Prusa's HF0.6 drafts for them
+  resolve to 14. Only keys reviewed into `COMMON_ADOPT`, each with its reason,
+  are taken, and the bundle header records them. A per-nozzle common that
+  changes any other key stops the build, as do a family with no sized
+  counterpart upstream and a toolchanger key set anywhere but the common.
 - Every other key takes the CORE One value **only if INDX agreed with CORE One
   at 0.4**. Where INDX already differs it made a deliberate toolchanger-specific
   choice, and that choice is preserved. This is why Generic ABS keeps

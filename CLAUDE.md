@@ -23,9 +23,10 @@ that.
    rejecting 0.25/0.3, and `nozzles.py` giving 0.3 no flow targets. A loud
    failure beats a plausible fabrication.
 2. **Record provenance for anything changed.** `COMMON_EDITS` and `Nozzle.extra`
-   in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, and `TRANSFER` /
-   `RETARGET` / `DRAFT_ADOPT` in `build_printer_preset.py` all carry a reason
-   string per key, and every generator writes its changed keys and their reasons
+   in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, `TRANSFER` /
+   `RETARGET` / `DRAFT_ADOPT` in `build_printer_preset.py`, `COMMON_ADOPT` in
+   `derive_filaments.py` and `STD_SKIP` in `derive_std_filaments.py` all carry a
+   reason string per key, and every generator writes its changed keys and their reasons
    into the file it emits. Keep that pattern: a new override channel without a
    reason string is the failure mode to watch for.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
@@ -264,11 +265,38 @@ Since 2.5.12 Prusa also publishes the INDX toolchanger common per nozzle:
 `*C1INDX_06_common*` and `*C1INDX_08_common*` inherit `*C1INDX_common*` and
 change two keys (wipe-tower minimal purge 10 → 14 / 20,
 `filament_retract_restart_extra_toolchange` unset → 0.04 / 0.05), and the 0.6
-and 0.8 family sections inherit them in its place. `derive_filaments.py` applies that
-delta wherever the INDX 0.4 preset took the shared common's value and keeps a 0.4
-preset's own override (FLEX and TPU 95A purge 15), the same agreed-at-0.4 logic
-as the CORE One transfer. There is no `04` or `025` common, so the standard
-bundles are untouched.
+and 0.8 family sections inherit them in its place. Prusa's sized chains swap the
+whole family section, not just the common: `Prusament PLA @COREONEINDX HF0.4`
+inherits `*PLAHFC1INDX*`, its commented HF0.6 draft `*PLA06HFC1INDX*`. (Most
+drafts do; the BVOH drafts carry no INDX family and PC Blend CF's takes
+`*PC06PGC1INDX*`, which stands on the same common.) So
+`derive_filaments.py` works per base:
+- the 0.4 family is the one section of the base's chain that inherits
+  `*C1INDX_common*` directly (structure);
+- its sized counterpart is named by the same token swap PA uses
+  (`*PLAHFC1INDX*` → `*PLA06HFC1INDX*`, `*FLEX04PGC1INDX*` → `*FLEX06PGC1INDX*`),
+  and a missing one refuses;
+- the per-nozzle common is whichever parent of that counterpart reaches
+  `*C1INDX_common*`, under any name (structure again), so a rename or an
+  intermediate section is followed, not silently dropped;
+- nothing after that common in the counterpart (its own body, later parents)
+  may set a toolchanger key, or the build refuses: such a value would override
+  the common and be misattributed to it;
+- the base is re-resolved with the family swapped, and each `COMMON_ADOPT` key
+  takes the value from that chain.
+
+The swap makes the 0.4 family's body and anything inherited before it give way,
+as in Prusa's chain. A value the 0.4 preset sets in its own body survives as an
+own override, whether or not it agreed with anything; that is this repo's choice,
+not Prusa's (Prusa's HF0.6 drafts for FLEX and TPU 95A resolve to purge 14; ours
+keep their 0.4 15). Do not reduce this to a
+value comparison against `*C1INDX_common*`: a key it leaves unset can arrive from a
+generic CORE One or MK4 ancestor, and an equality test would mistake that for an
+INDX choice. Only keys in `COMMON_ADOPT` (key → reason, like `DRAFT_ADOPT`) are
+taken. The tool refuses on any other changed key, on a per-nozzle common that drops
+a shared key, and on a missing or ambiguous family, so a re-pin cannot slip a
+toolchanger change in unreviewed. There is no `04` or `025` common, so the
+standard bundles are untouched.
 
 Filament binding: every generated filament keeps its HF0.4 base's
 `printer_model=~/(...)/` clause (`printer_models()` in `build_print_profiles.py`)
