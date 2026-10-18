@@ -107,6 +107,8 @@ TRANSFER = ['slowdown_below_layer_time', 'fan_below_layer_time', 'min_print_spee
 # the diameter without its dot, exactly as Prusa writes it: 0.6 -> 06.
 PA_SIZED = re.compile(r'^\*C1INDX_([A-Z]+)_(\d+)_PA\*$')
 PA_FLAT = re.compile(r'^\*C1INDX_([A-Z]+)_PA\*$')     # nozzle independent, e.g. FLEX
+# A name match is necessary, not sufficient: the polyamide chamber section
+# *C1INDX_CH_PA* matches PA_FLAT, so pa_source() also requires an M572.
 # Keys from Prusa's commented HF<dia> drafts to show against the derived values.
 DRAFT_WATCH = ['filament_max_volumetric_speed', 'slowdown_below_layer_time']
 
@@ -220,11 +222,20 @@ def parents(S, name, out=None):
 
 
 def pa_source(S, mat):
-    """The INDX PA section this material inherits at 0.4, or None."""
-    for p in parents(S, 'filament:' + mat + INDX_SUFFIX):
-        if PA_SIZED.match(p) or PA_FLAT.match(p):
-            return p
-    return None
+    """The INDX PA section this material inherits at 0.4, or None.
+
+    A PA section is named like one and types an M572 in its own body. The name
+    alone is not enough: PA_FLAT also matches the polyamide chamber section
+    *C1INDX_CH_PA*, which would pass a polyamide base off as nozzle independent.
+    Refuses on more than one, rather than letting chain order pick."""
+    name = 'filament:' + mat + INDX_SUFFIX
+    found = sorted({p for p in parents(S, name)
+                    if (PA_SIZED.match(p) or PA_FLAT.match(p))
+                    and m572(S.get('filament:' + p, {}).get('start_filament_gcode')) is not None})
+    if len(found) > 1:
+        sys.exit('refusing: %s inherits more than one INDX PA section (%s)'
+                 % (mat + INDX_SUFFIX, ', '.join(found)))
+    return found[0] if found else None
 
 
 def m572(gcode):

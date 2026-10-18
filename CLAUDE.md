@@ -79,6 +79,7 @@ tools/build_print_profiles.py  GENERATOR  vendor bundle (HF sizes, --std 0.4)
 tools/build_printer_preset.py  GENERATOR  printer presets (HF sizes, --std)
 tools/derive_filaments.py      GENERATOR  high-flow filament bundles
 tools/derive_std_filaments.py  GENERATOR  standard-nozzle filament bundles
+tests/test_generators.py   handwritten  synthetic-INI tests of refusals and guards
 LICENSE                    AGPL-3.0, this repo's own work only
 ```
 
@@ -130,7 +131,15 @@ print profiles, new commented drafts (`^; \[`), changes to `*C1INDX_*_PA*`, and
 changes to the INDX `compatible_printers_condition` lines. Run the tools without
 `python3 -I`: they import each other from `tools/`.
 
-After any change to the generators, rebuild every artifact from the pinned
+After any change to the generators, run the synthetic-INI tests, which need no
+`PrusaResearch.ini`:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+A new refusal gets a test there that shows it fires and writes no output file.
+Then rebuild every artifact from the pinned
 2.5.12 `PrusaResearch.ini` into a scratch directory with the recipe above, and
 check all three outputs. `diff -r` against `printer/` and `filaments/` must be
 empty: those files are fully flattened with sorted keys, so text equality is
@@ -332,10 +341,14 @@ Pressure advance is never scaled: Prusa publishes it per nozzle, in
 `*C1INDX_<FAM>_<NN>_PA*` for PLA/PET/ABS/PC/PA (polyamide)/PP at
 `04`/`05`/`06`/`08` (PP is 0 throughout), PLA and PET also at `025` (0.1 / 0.15,
 which `derive_std_filaments.py` uses), plus the nozzle-independent
-`*C1INDX_FLEX_PA*`. Prusa's own structure gives the mapping —
-`*PLA06HFC1INDX*` inherits `*C1INDX_PLA_06_PA*` — so `derive_filaments.py` reads
-the PA section out of the HF0.4 chain (`*C1INDX_PLA_04_PA*`) and swaps its
-nozzle token (`*C1INDX_PLA_06_PA*`), preferring a figure Prusa typed into its
+`*C1INDX_FLEX_PA*`. A section counts as PA only if its name matches and its own
+body types an M572: the polyamide chamber section `*C1INDX_CH_PA*` matches the
+nozzle-independent name, and taken for PA it would keep a polyamide base's 0.4
+figure. A chain with two PA sections refuses. Prusa's own structure gives the
+mapping — `*PLA06HFC1INDX*` inherits `*C1INDX_PLA_06_PA*` — so
+`derive_filaments.py` reads the PA section out of the HF0.4 chain
+(`*C1INDX_PLA_04_PA*`) and swaps its nozzle token (`*C1INDX_PLA_06_PA*`),
+preferring a figure Prusa typed into its
 commented `<mat> @COREONEINDX HF<dia>` draft where there is one. Where Prusa has
 no sized figure the tool keeps the 0.4 value, noted in the report and
 `filament_notes` but not refused: by design for FLEX/TPU (`*C1INDX_FLEX_PA*` is
