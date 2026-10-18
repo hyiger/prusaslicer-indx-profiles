@@ -617,7 +617,7 @@ usually more specific than anything a CORE One delta can supply. At 2.5.12
 | Draft | Used |
 |---|---|
 | 4 INDX printers: 8T/4T at `HF0.6`, `HF0.8` | **yes**, for the keys in `DRAFT_ADOPT` |
-| 2 INDX printers: 8T/4T at `0.25` | **yes**, applied key for key; the CORE One 0.25 delta is not consulted |
+| 2 INDX printers: 8T/4T at `0.25` | **yes**, applied key for key; the CORE One 0.25 delta is only compared with it, on stdout |
 | 2 INDX 0.25 filaments: `Prusament PLA` / `PETG` | **yes**, applied as written |
 | 10 INDX print profiles at `HF0.5` / `HF0.6` / `HF0.8` (4 / 4 / 2) | no — HF0.5/HF0.6 restate the inherited speeds and set per-layer contact distances and solid counts; HF0.8 sets its own speeds but every one overruns the filaments |
 | 3 INDX print profiles at `HF0.4` (Balanced Strength, Soluble Full, Soluble Interface) | no — `--std 0.4` copies only Prusa's four released HF0.4 prints |
@@ -626,9 +626,10 @@ usually more specific than anything a CORE One delta can supply. At 2.5.12
 
 For the high-flow printers, `build_printer_preset.py` applies the CORE One delta
 first, then compares the result against Prusa's draft for that size. (`--std 0.25`
-works differently: the draft is taken whole over the parent it names, with no
-comparison. A CORE One HF0.4 → 0.25 delta does exist, but it is not consulted,
-and it disagrees with the draft on `retract_length` (0.8 against 0.7) and jerk.) Where they disagree on a
+works differently: the draft is taken whole over the parent it names. The CORE
+One HF0.4 → 0.25 delta is not applied; the generator prints each key where it
+disagrees with the result, at 2.5.12 jerk (8,8 against 10,8) and
+`retract_length` (0.8 against 0.7).) Where they disagree on a
 key listed in `DRAFT_ADOPT` — the five retraction keys — the draft wins and the
 generated header records it. A disagreement on **any other key stops the build**,
 because Prusa having drafted a different value is evidence, not noise, and

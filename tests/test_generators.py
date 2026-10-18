@@ -328,6 +328,65 @@ class RenamedFrom(Tool):
         self.assertNotIn('renamed_from', out)
 
 
+# --- build_printer_preset.py: the CORE One 0.25 delta is reported, not applied
+
+PRINTERS_025 = '''
+[printer:Prusa CORE One HF0.4 nozzle]
+nozzle_diameter = 0.4
+machine_max_jerk_x = 10,8
+retract_length = 0.7
+
+[printer:Prusa CORE One 0.25 nozzle]
+nozzle_diameter = 0.25
+machine_max_jerk_x = 8,8
+retract_length = 0.8
+
+[printer:Prusa CORE One INDX 8T HF0.4 nozzle]
+printer_model = COREONE_INDX8T
+nozzle_diameter = 0.4,0.4,0.4
+machine_max_jerk_x = 10,8
+retract_length = 0.8,0.8,0.8
+default_print_profile = 0.20mm Balanced @COREONEINDX HF0.4
+default_filament_profile = "Prusament PLA @COREONEINDX HF0.4"
+
+; [printer:Prusa CORE One INDX 8T 0.25 nozzle]
+; inherits = Prusa CORE One INDX 8T HF0.4 nozzle
+; nozzle_diameter = 0.25,0.25,0.25
+; retract_length = 0.7,0.7,0.7
+'''
+
+
+class CoreOne025CrossCheck(Tool):
+
+    def build(self, text):
+        result = self.run_tool('build_printer_preset.py', text, '-n', '0.25', '--std',
+                               out='printer')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(os.path.join(self.out, 'Prusa CORE One INDX 8T 0.25 nozzle.ini'),
+                  encoding='utf-8') as f:
+            return result.stdout, f.read()
+
+    def test_disagreements_are_printed_and_not_applied(self):
+        stdout, out = self.build(ini(VENDOR, PRINTERS_025))
+        self.assertIn('CORE One HF0.4 -> 0.25 delta, reported and not applied', stdout)
+        self.assertRegex(stdout, r'machine_max_jerk_x +CORE One 10,8 -> 8,8; INDX HF0.4 '
+                                 r'10,8; emitted 10,8 \(not in the draft\)')
+        self.assertRegex(stdout, r"retract_length +CORE One 0.7 -> 0.8; INDX HF0.4 0.8; "
+                                 r"emitted 0.7 \(Prusa's draft\)")
+        # nozzle_diameter agrees once the per-tool vector is read as one value.
+        self.assertNotRegex(stdout, r'nozzle_diameter +CORE One')
+        self.assertIn('machine_max_jerk_x = 10,8', out)
+        self.assertIn('retract_length = 0.7,0.7,0.7', out)
+        self.assertNotIn('CORE One HF0.4 -> 0.25', out)
+
+    def test_no_core_one_025_printer(self):
+        text = ini(VENDOR, PRINTERS_025.replace('[printer:Prusa CORE One 0.25 nozzle]',
+                                                '[printer:Prusa CORE One 0.3 nozzle]'))
+        stdout, _ = self.build(text)
+        self.assertIn('no [printer:Prusa CORE One 0.25 nozzle] upstream; nothing to '
+                      'cross-check', stdout)
+
+
 # --- build_print_profiles.py: the header records every change and its reason
 
 HF04_PRINT = '''

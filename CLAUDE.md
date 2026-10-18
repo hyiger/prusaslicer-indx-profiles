@@ -234,12 +234,15 @@ holds.
     CORE One delta, compares the result against the draft, adopts the keys in
     `DRAFT_ADOPT` and refuses on any other disagreement. The two `0.25` drafts:
     `build_std()` re-resolves the parent the draft names and applies every draft
-    key over it, with no `DRAFT_ADOPT` gate and no comparison. A CORE One HF0.4
-    → 0.25 delta does exist (`Prusa CORE One 0.25 nozzle`), but `STD_PAIR` lists
-    only 0.4, so it is never consulted. It disagrees with the draft:
-    `retract_length` 0.8 against the draft's 0.7, and jerk 8,8 where the draft
-    leaves INDX's 10,8. Jerk is not in `TRANSFER`, so `apply_delta` would refuse
-    on it. Both 4T HF drafts say `inherits = *C1_INDX_8T_common*`, and the 4T
+    key over it, with no `DRAFT_ADOPT` gate. The CORE One HF0.4 → 0.25 delta
+    (`Prusa CORE One 0.25 nozzle`, `STD_CHECK`) is not applied, only compared
+    with the result: `cross_check()` prints each delta key where the draft-built
+    preset ends up elsewhere, to stdout only. The owner chose that over adopting
+    it. At 2.5.12 it prints jerk, 8,8 where the draft leaves INDX's 10,8, and
+    `retract_length`, CORE One 0.8 against the draft's 0.7. Applying the delta
+    could not work as written: jerk is not in `TRANSFER`, and a machine limit is
+    a (normal, stealth) pair that `uniform()` reads as non-uniform per-tool
+    values. Both 4T HF drafts say `inherits = *C1_INDX_8T_common*`, and the 4T
     `HF0.6` one also has an 8-wide `nozzle_diameter`; the 4T `HF0.8` one is
     4-wide throughout. Neither bug reaches the output. `inherits` is in
     `DRAFT_SKIP`, the base is always the shipping 4T HF0.4 preset, and every
@@ -528,6 +531,12 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
   does still fall back to the standard `@COREONE` → `@COREONE 0.8` *ratio* for
   the 11 of 19 materials with no HF0.8 pair (Prusament PVB 6 → 19), one more
   reason 0.8 stays unvalidated.
+- **The 0.25 printer keeps jerk 10,8 where `Prusa CORE One 0.25 nozzle` has
+  8,8, and `retract_length` 0.7 where it has 0.8.** The 0.25 preset is Prusa's
+  INDX 0.25 draft, which sets `retract_length` 0.7 and leaves jerk at the INDX
+  HF0.4 value. The CORE One delta is reported (`STD_CHECK`), not applied. Under
+  the agreed-at-0.4 rule `retract_length` would not move anyway: INDX HF0.4 has
+  0.8 where CORE One HF0.4 has 0.7.
 - **HF0.6 pressure advance is *lower* than HF0.4** (Prusament PLA 0.02 vs
   0.038). Prusa's own per-nozzle figures go that way. See "Data model".
 - **The HF0.6 printer preset's `retract_length` is 0.7, not the 0.8 its chain

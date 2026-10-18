@@ -45,7 +45,9 @@ names its own STD variants ("Prusa CORE One INDX 8T 0.4 nozzle"):
   0.4   the CORE One HF0.4 -> 0.4 delta, under the same agreed-at-0.4 rule.
         Upstream it is nozzle_high_flow, printer_variant and the two defaults.
   0.25  Prusa's own commented-out "[printer:Prusa CORE One INDX <model> 0.25
-        nozzle]" draft in PrusaResearch.ini, applied key for key.
+        nozzle]" draft in PrusaResearch.ini, applied key for key. The CORE One
+        HF0.4 -> 0.25 delta is not applied, only compared with the result, and
+        each key where they differ is printed (STD_CHECK).
 
 Every preset also gets one fix to Prusa's layer G-code. Its PET-family dock-fan
 check, `filament_type[N]=~/(PET|CPE|PCTG)/`, must match the whole type, so it
@@ -119,6 +121,12 @@ DRAFT_SKIP = {'inherits'} | set(RETARGET)
 # Standard nozzles: where each size's delta comes from.
 STD_PAIR = {'0.4': 'Prusa CORE One 0.4 nozzle'}          # vs REF_BASE
 STD_DRAFT = {'0.25': 'Prusa CORE One INDX %s 0.25 nozzle'}  # % model
+# The CORE One printer at each drafted size. Its REF_BASE -> <dia> delta is not
+# applied: the draft is the INDX-specific source and wins whole. It is compared
+# with the draft-built preset, and every key where the two differ is printed, so a
+# re-pin that moves either side is seen. At 2.5.12 that is jerk (CORE One 8,8;
+# INDX 10,8, which the draft leaves) and retract_length (CORE One 0.8; draft 0.7).
+STD_CHECK = {'0.25': 'Prusa CORE One 0.25 nozzle'}
 # A standard nozzle keeps Prusa's default profile names and moves the size tag.
 STD_TAG = (' @COREONEINDX HF0.4', ' @COREONEINDX %s')
 
@@ -284,6 +292,44 @@ def fix_dock_fan(cfg, changed, report):
     changed.append(('layer_gcode', stock, fixed, '%s (x%d)' % (why, gcode.count(stock))))
 
 
+def per_tool(value, cfg):
+    """`value` as one value if it is a uniform vector with one entry per tool of
+    `cfg`, else as written: machine limits are (normal, stealth) pairs, and a
+    CORE One has one tool, so its 8,8 jerk must stay 8,8."""
+    if value is None:
+        return 'unset'
+    tools = len(cfg.get('nozzle_diameter', '').split(','))
+    one = uniform(value)
+    return one if tools > 1 and len(value.split(',')) == tools and one is not None else value
+
+
+def cross_check(vendor, base, cfg, draft, ref_name, label, report):
+    """Report, without applying it, each key of the CORE One REF_BASE -> ref_name
+    delta where the preset built from Prusa's INDX draft ends up elsewhere.
+    RETARGET pointers are left out: they name INDX profiles, never CORE One ones."""
+    if 'printer:' + ref_name not in vendor:
+        report.append('  no [printer:%s] upstream; nothing to cross-check' % ref_name)
+        return
+    ref04 = resolve(vendor, 'printer:' + REF_BASE)
+    ref = resolve(vendor, 'printer:' + ref_name)
+    for r in (ref04, ref):
+        r.pop('renamed_from', None)
+    rows = []
+    for key in sorted(k for k in set(ref04) | set(ref)
+                      if ref04.get(k) != ref.get(k) and k not in RETARGET):
+        mine = per_tool(cfg.get(key), cfg)
+        if mine == per_tool(ref.get(key), ref):
+            continue
+        rows.append('    %-24s CORE One %s -> %s; INDX HF0.4 %s; emitted %s (%s)'
+                    % (key, per_tool(ref04.get(key), ref04), per_tool(ref.get(key), ref),
+                       per_tool(base.get(key), base), mine,
+                       'Prusa\'s draft' if key in draft else 'not in the draft'))
+    if rows:
+        report.append('  CORE One HF0.4 -> %s delta, reported and not applied; the preset '
+                      'built from Prusa\'s INDX %s draft differs on:' % (label, label))
+        report += rows
+
+
 def build_std(vendor, drafts, dia, model, report):
     """A standard (non-HF) nozzle, from Prusa's own sources only."""
     if model not in MODELS:
@@ -308,6 +354,7 @@ def build_std(vendor, drafts, dia, model, report):
         draft = dict(drafts[draft_name])
         parent = draft.pop('inherits', '')
         draft.pop('renamed_from', None)  # names Prusa's own preset, not this one
+        base = cfg
         cfg = dict(resolve(vendor, 'printer:' + parent))
         cfg.pop('renamed_from', None)
         changed = []
@@ -320,6 +367,7 @@ def build_std(vendor, drafts, dia, model, report):
                 changed.append((key, cfg[key], new,
                                 'INDX pointer, retargeted to %s (not in the draft)' % dia))
                 cfg[key] = new
+        cross_check(vendor, base, cfg, draft, STD_CHECK[dia], dia, report)
     else:
         raise SystemExit('refusing: no Prusa source for a standard %s mm INDX nozzle '
                          '(known: %s)' % (dia, ', '.join(sorted(set(STD_PAIR) | set(STD_DRAFT)))))
