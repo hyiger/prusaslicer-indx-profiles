@@ -2,11 +2,11 @@
 """
 Derive INDX filament presets for a given nozzle size from Prusa's own profiles.
 
-Prusa ships 19 filament profiles for the INDX. All of them require a high-flow
-nozzle except Generic FLEX and Prusament TPU 95A: 11 pin
-`nozzle_diameter[0]==0.4` and the PET/ABS/BVOH eight bind by exclusion
-(`!=0.8 and !=0.6 and !=0.5`). Either way, select a 0.6 toolhead and the
-filament dropdown empties.
+Prusa ships 20 filament profiles for the INDX (Generic PVA joined in 2.5.12).
+All of them require a high-flow nozzle except Generic FLEX and Prusament TPU
+95A: 11 pin `nozzle_diameter[0]==0.4` and the PET/ABS/BVOH/PVA nine bind by
+exclusion (`!=0.8 and !=0.6 and !=0.5`). Either way, select a 0.6 toolhead and
+the filament dropdown empties.
 
 Method
 ------
@@ -18,7 +18,7 @@ which is Prusa's measured answer to "what changes when this filament moves to a
 <dia> high-flow nozzle". Falls back to the non-HF @COREONE -> @COREONE <dia>
 pair where Prusa published no high-flow profile.
 
-Three rules:
+Four rules:
   * filament_max_volumetric_speed is always ratio-scaled off the INDX 0.4 value,
     because the INDX toolhead has its own flow baseline distinct from CORE One.
   * pressure advance is Prusa's own figure for this nozzle, not a scaled one:
@@ -26,9 +26,19 @@ Three rules:
     commented `<mat> @COREONEINDX HF<dia>` draft where that is more specific.
     Prusa's INDX PA falls as the nozzle grows (PLA 0.031 at 0.4 -> 0.02 at 0.6),
     so carrying the 0.4 figure across would over-retract on deceleration.
+  * the INDX toolchanger keys Prusa sets per nozzle come from its per-nozzle
+    common, `*C1INDX_<dia>_common*`, which since 2.5.12 its 0.6 and 0.8 family
+    sections inherit in place of `*C1INDX_common*` (0.6: wipe-tower minimal
+    purge 10 -> 14, filament_retract_restart_extra_toolchange 0.04, the
+    toolchange G-code having dropped its fixed 0.04 retract). Applied wherever
+    the 0.4 preset took the shared common's value; a 0.4 preset's own override
+    is kept, as in the next rule.
   * every other key takes the CORE One <dia> value ONLY if INDX agreed with
     CORE One at 0.4. Where INDX already differs it made a deliberate
     toolchanger-specific choice, so that choice is preserved.
+
+Each preset keeps its base's printer_model clause (see printer_models()), so it
+binds to exactly the INDX models Prusa binds that material to.
 
 Prusa's commented HF<dia> filament drafts are reported side by side with the
 derived values but, PA aside, are not adopted. Every figure the report can show
@@ -52,12 +62,13 @@ import collections
 import re
 import sys
 
-from build_print_profiles import load, load_drafts, resolve
+from build_print_profiles import load, load_drafts, printer_models, resolve
 from nozzles import NOZZLES
 
 INDX_SUFFIX = ' @COREONEINDX HF0.4'
-COND_TMPL = ('printer_model=~/(COREONE_INDX8T|COREONE_INDX4T|COREONEL_INDX8T|COREONEL_INDX4T)/ '
-             'and nozzle_diameter[0]==%s and nozzle_high_flow[0]')
+BIND_TMPL = ' and nozzle_diameter[0]==%s and nozzle_high_flow[0]'
+# Prusa's shared INDX toolchanger common; *C1INDX_<dia>_common* is its per-nozzle variant.
+COMMON = '*C1INDX_common*'
 
 # Keys worth transferring when INDX and CORE One agreed at 0.4.
 TRANSFER = ['slowdown_below_layer_time', 'fan_below_layer_time', 'min_print_speed',
@@ -74,8 +85,20 @@ DRAFT_WATCH = ['filament_max_volumetric_speed', 'slowdown_below_layer_time']
 
 
 def pa_token(dia):
-    """Prusa's PA-section nozzle token: '0.6' -> '06', '0.25' -> '025'."""
+    """Prusa's per-nozzle section token, for PA and common sections alike:
+    '0.6' -> '06', '0.25' -> '025'."""
     return dia.replace('.', '')
+
+
+def common_delta(S, dia):
+    """(section, {key: (shared value, per-nozzle value)}) for the keys Prusa's
+    per-nozzle INDX common changes from *C1INDX_common*. Empty where Prusa has
+    no common for this size."""
+    sec = '*C1INDX_%s_common*' % pa_token(dia)
+    if 'filament:' + sec not in S:
+        return sec, {}
+    shared, sized = resolve(S, 'filament:' + COMMON), resolve(S, 'filament:' + sec)
+    return sec, {k: (shared.get(k), v) for k, v in sized.items() if shared.get(k) != v}
 
 
 def parents(S, name, out=None):
@@ -170,6 +193,7 @@ def main():
                  'ones at HF0.5, HF0.6 and HF0.8; at %s mm there is nothing in either\n'
                  'family to scale against. Measure MVS directly instead.' % (dia, dia))
 
+    common_sec, delta = common_delta(S, dia)
     noz = NOZZLES.get(dia)
     validated = bool(noz and noz.validated)
     out = ['# INDX %s mm filament presets, by hyiger.' % dia,
@@ -182,6 +206,7 @@ def main():
         out.append('#              ratio-scaled off Prusa 0.4 values, not measured here.')
     out.append('')
     report, pa_report, draft_report = [], [], []
+    common_report = collections.OrderedDict((k, ([], [])) for k in sorted(delta))
 
     for mat in mats:
         base = resolve(S, 'filament:' + mat + INDX_SUFFIX)
@@ -227,6 +252,21 @@ def main():
             pa_note = 'PA %s kept from 0.4: %s' % (pa0, pa_why)
         pa_report.append((mat, pa0 or '-', pa1 or pa0 or '-', pa_why))
 
+        # Prusa's per-nozzle INDX common, wherever the 0.4 preset took the shared one's value.
+        common_notes = []
+        if delta and COMMON not in parents(S, 'filament:' + mat + INDX_SUFFIX):
+            sys.exit('refusing: %s does not inherit %s, so %s has nothing to replace'
+                     % (mat + INDX_SUFFIX, COMMON, common_sec))
+        for k, (v0, v1) in sorted(delta.items()):
+            if base.get(k) == v0:
+                new[k] = v1
+                common_notes.append('%s %s -> %s' % (k, v0 or 'unset', v1))
+                common_report[k][0].append(mat)
+            else:
+                common_notes.append('own %s %s kept over %s' % (k, base[k], v1))
+                common_report[k][1].append('%s %s' % (mat, base[k]))
+        common_note = ' %s: %s.' % (common_sec, '; '.join(common_notes)) if common_notes else ''
+
         # Show what Prusa's commented draft for this size says, adopted or not.
         draft = drafts.get('filament:%s @COREONEINDX HF%s' % (mat, dia), {})
         for k in DRAFT_WATCH:
@@ -234,7 +274,8 @@ def main():
                 draft_report.append((mat, k, draft[k], new.get(k, '-')))
 
         new.pop('renamed_from', None)  # a new preset, not a rename of the base
-        new['compatible_printers_condition'] = COND_TMPL % dia
+        new['compatible_printers_condition'] = (
+            printer_models(base.get('compatible_printers_condition')) + BIND_TMPL % dia)
         new['compatible_printers'] = ''
         new['filament_settings_id'] = ''
         # Keep Prusa's own notes: the INDX start G-code reads markers such as
@@ -242,9 +283,9 @@ def main():
         notes = base.get('filament_notes', '""').strip('"')
         new['filament_notes'] = '"%s%s"' % (
             notes + '\\n' if notes else '',
-            'INDX %s seed. Base: %s. MVS %g -> %g via CORE One %s (x%.2f). %s. '
+            'INDX %s seed. Base: %s. MVS %g -> %g via CORE One %s (x%.2f). %s.%s '
             'Prusa nozzle ratio applied to a Bondtech CHT - re-measure MVS and PA.'
-            % (dia, mat + INDX_SUFFIX, mvs0, mvs1, label, ratio, pa_note))
+            % (dia, mat + INDX_SUFFIX, mvs0, mvs1, label, ratio, pa_note, common_note))
 
         out.append('[filament:%s @COREONEINDX HF%s]' % (mat, dia))
         for k in sorted(new):
@@ -266,6 +307,14 @@ def main():
     print('-' * (w + 60))
     for m, a, b, why in pa_report:
         print('%-*s %8s %8s  %s' % (w, m, a, b, why))
+
+    if common_report:
+        print('\nPer-nozzle INDX common %s, over %s:' % (common_sec, COMMON))
+        for k, (moved, kept) in common_report.items():
+            v0, v1 = delta[k]
+            print('  %s %s -> %s on %d presets' % (k, v0 or 'unset', v1, len(moved)))
+            if kept:
+                print('    own 0.4 value kept: %s' % ', '.join(kept))
 
     if draft_report:
         print('\nPrusa\'s commented "@COREONEINDX HF%s" drafts disagree here, and are not '

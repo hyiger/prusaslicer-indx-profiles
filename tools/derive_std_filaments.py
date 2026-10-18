@@ -3,9 +3,9 @@
 Derive INDX filament presets for a standard (non-high-flow) 0.4 or 0.25 mm
 nozzle from Prusa's own profiles.
 
-All 19 of Prusa's INDX filaments require `nozzle_high_flow[0]` except Generic
+All 20 of Prusa's INDX filaments require `nozzle_high_flow[0]` except Generic
 FLEX and Prusament TPU 95A, which bind on diameter alone. Eleven pin
-`nozzle_diameter[0]==0.4`; the PET/ABS/BVOH eight bind by exclusion
+`nozzle_diameter[0]==0.4`; the PET/ABS/BVOH/PVA nine bind by exclusion
 (`nozzle_diameter[0]!=0.8 and !=0.6 and !=0.5`), via *PETHFC1INDX* and
 *ABSHFC1INDX*, so those also reach a high-flow 0.25 or 0.3. Either way, on a
 standard nozzle the filament list is almost empty.
@@ -48,6 +48,13 @@ derive_filaments.py has to refuse.
     start G-code, which keeps M906 P2 and friends.
   * filament_max_volumetric_speed = min(INDX HF0.4, CORE One STD, 0.25 chain).
 
+Every preset keeps its INDX HF0.4 base's printer_model clause, so it binds to
+exactly the INDX models Prusa binds that material to.
+
+A material with no CORE One STD counterpart refuses: there is no STD parent to
+swap in, no MVS cap and no 0.25 compatibility to test. The only exceptions are
+the reviewed entries in STD_SKIP, each skipped with its reason in the report.
+
 Every number is Prusa's. Calibrate pressure advance and max volumetric speed
 before trusting them.
 
@@ -59,13 +66,20 @@ import collections
 import re
 import sys
 
-from build_print_profiles import load, load_drafts, resolve
+from build_print_profiles import load, load_drafts, printer_models, resolve
 from nozzles import STD_VALIDATED
 
 INDX_SUFFIX = ' @COREONEINDX HF0.4'
-MODELS = 'printer_model=~/(COREONE_INDX8T|COREONE_INDX4T|COREONEL_INDX8T|COREONEL_INDX4T)/'
-COND = {'0.4': MODELS + ' and nozzle_diameter[0]==0.4 and ! nozzle_high_flow[0]',
-        '0.25': MODELS + ' and nozzle_diameter[0]==0.25'}
+# Appended to the base's own printer_model clause.
+BIND = {'0.4': ' and nozzle_diameter[0]==0.4 and ! nozzle_high_flow[0]',
+        '0.25': ' and nozzle_diameter[0]==0.25'}
+# INDX filaments reviewed and left out because they have no CORE One STD
+# counterpart. Anything else without one still refuses.
+STD_SKIP = {
+    'Generic PVA': 'INDX only upstream since PrusaResearch 2.5.12 (Verbatim BVOH '
+                   'plus its own overrides); no Generic PVA @COREONE to swap in, '
+                   'cap MVS against or test against a 0.25 nozzle',
+}
 
 # Prusa's INDX HF0.4 bases -> its unused STD bases, per nozzle.
 BASE_SWAP = {
@@ -173,8 +187,9 @@ def tune_025(own, parents, hf, S, drafts):
     return []
 
 
-def derive(S, drafts, dia):
-    """Yield (name, config, provenance) for every derivable preset at this size."""
+def derive(S, drafts, dia, skipped):
+    """Yield (name, config, provenance) for every derivable preset at this size,
+    appending (material, reason) to `skipped` for each STD_SKIP entry met."""
     core_one_025 = resolve(S, 'printer:' + CORE_ONE_025) if dia == '0.25' else None
     built = {}
     for key in [k for k in S if k.startswith('filament:') and k.endswith(INDX_SUFFIX)]:
@@ -183,6 +198,12 @@ def derive(S, drafts, dia):
         if 'nozzle_high_flow' not in hf.get('compatible_printers_condition', ''):
             continue  # FLEX/TPU: binds on diameter alone; no INDX 0.25 FLEX base
         co_std = 'filament:%s @COREONE' % mat
+        if mat in STD_SKIP:
+            if co_std in S:
+                raise SystemExit('refusing: %s is in STD_SKIP, but %s now exists; '
+                                 'review the entry' % (mat, co_std[len('filament:'):]))
+            skipped.append((mat, STD_SKIP[mat]))
+            continue
         if co_std not in S:
             raise SystemExit('refusing: %s has no CORE One STD counterpart' % key)
         if dia == '0.25' and not evaluate(resolve(S, co_std).get('compatible_printers_condition', ''),
@@ -235,7 +256,8 @@ def derive(S, drafts, dia):
                 pa_note = 'PA from the CORE One 0.25 value'
 
         cfg.pop('renamed_from', None)  # a new preset, not a rename of the source
-        cfg['compatible_printers_condition'] = COND[dia]
+        cfg['compatible_printers_condition'] = (
+            printer_models(hf.get('compatible_printers_condition')) + BIND[dia])
         cfg['compatible_printers'] = ''
         cfg['filament_settings_id'] = ''
         provenance = ('INDX %s STD seed from %s (%s). MVS %s (min of INDX HF0.4 %s, CORE One STD %s%s). '
@@ -257,7 +279,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('vendor', help='path to PrusaResearch.ini')
     ap.add_argument('out', help='output config bundle .ini')
-    ap.add_argument('-n', '--nozzle', required=True, choices=sorted(COND),
+    ap.add_argument('-n', '--nozzle', required=True, choices=sorted(BIND),
                     help='standard nozzle size')
     args = ap.parse_args()
     dia = args.nozzle
@@ -272,8 +294,8 @@ def main():
     if not STD_VALIDATED.get(dia, False):
         out.append('# UNVALIDATED: not yet test printed on a standard %s mm INDX nozzle.' % dia)
     out.append('')
-    report = []
-    for name, cfg, row in derive(S, drafts, dia):
+    report, skipped = [], []
+    for name, cfg, row in derive(S, drafts, dia, skipped):
         out.append('[filament:%s]' % name)
         for k in sorted(cfg):
             out.append('%s = %s' % (k, cfg[k]))
@@ -290,6 +312,8 @@ def main():
     print('-' * (w + 60))
     for mat, a, b, how, pa in report:
         print('%-*s %7s %7s  %s; %s' % (w, mat, a, b, how, pa))
+    for mat, why in skipped:
+        print('%-*s %7s %7s  skipped (STD_SKIP): %s' % (w, mat, '-', '-', why))
     print('\n%d presets -> %s' % (len(report), args.out))
     if not STD_VALIDATED.get(dia, False):
         print('!! UNVALIDATED: not yet test printed on a standard %s mm nozzle' % dia)
