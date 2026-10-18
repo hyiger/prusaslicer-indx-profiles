@@ -5,8 +5,9 @@ doesn't ship profiles for.
 
 Prusa's only INDX printer is **HF0.4** (high-flow 0.4 mm). `variants = HF0.4`
 is the entire variant list for both `COREONE_INDX8T` and `COREONE_INDX4T`.
-Prusa also ships print profiles for 0.25 and 0.3 mm, but no printer for them,
-and its INDX filaments bind to a high-flow 0.4 nozzle. Fit any other toolhead
+Prusa also ships print profiles for 0.25 and 0.3 mm, but no printer for them
+(and there is no 0.3 mm INDX nozzle at all), and its INDX filaments bind to a
+high-flow 0.4 nozzle. Fit any other toolhead
 and the print profile list narrows to nothing and the filament dropdown empties.
 
 The print profiles here install as **read-only system presets**: lock icon,
@@ -27,7 +28,7 @@ The generators handle other high-flow sizes too; see
 
 ```
 vendor/
-  hyigerINDX.ini                  vendor bundle — print profiles, all sizes
+  hyigerINDX.ini                  vendor bundle — print profiles (HF0.6, standard 0.4)
   hyigerINDX.idx                  version index
 filaments/
   hyigerINDX-0.6-filaments.ini    19 filament presets for HF0.6, for import
@@ -334,7 +335,7 @@ python3 tools/build_print_profiles.py <PrusaResearch.ini> /dev/null --list
 | Size | Upstream common | Layers | Status |
 |---|---|---|---|
 | 0.25 | `*INDX_025_common*` | 0.07 / 0.12 / 0.15 | shipped by Prusa, not built |
-| 0.3 | `*INDX_03_common*` | 0.12 / 0.16 / 0.20 | shipped by Prusa, not built |
+| 0.3 | `*INDX_03_common*` | 0.12 / 0.16 / 0.20 | shipped by Prusa, not built; no such INDX nozzle |
 | 0.5 | `*INDX_05hf_common*` | 0.15 / 0.20 / 0.25 | **unvalidated** targets |
 | 0.6 | `*INDX_06hf_common*` | 0.20 / 0.25 / 0.32 | validated, in use |
 | 0.8 | `*INDX_08hf_common*` | 0.30 / 0.40 / 0.55 | **unvalidated** targets |
@@ -345,7 +346,8 @@ Prusa renamed the high-flow commons (`*INDX_06_common*` became
 To build more than one size into the bundle:
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 --std 0.4
+python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.8
 python3 tools/derive_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.8-filaments.ini -n 0.8
 ```
 
@@ -358,23 +360,25 @@ has nothing below 0.20 — and those three rungs are also exactly the first thre
 Prusa's own commented `@COREONEINDX HF0.5` print draft lineup. At 0.8 the two
 ladders are identical.
 
-### There is no 0.2 mm
+### There is no 0.2 or 0.3 mm
 
-The smallest INDX nozzle Prusa defines is **0.25 mm** (`*INDX_025_common*`).
-`--nozzle 0.2` is rejected.
+There is no 0.2 mm or 0.3 mm INDX nozzle. The smallest INDX common Prusa defines
+is **0.25 mm** (`*INDX_025_common*`), and `--nozzle 0.2` is rejected. Prusa does
+define a 0.3 common and three 0.3 print profiles (below), but they are
+scaffolding: no 0.3 INDX printer exists, released or drafted.
 
 ### Prusa ships 0.25 and 0.3
 
 Since PrusaResearch 2.5.x Prusa ships its own `@COREONEINDX 0.25` and
 `@COREONEINDX 0.3` print profiles. They bind on diameter alone, so any INDX
-printer with that nozzle picks them up. `build_print_profiles.py` refuses both
+printer with that nozzle picks them up; only 0.25 is a real INDX nozzle. `build_print_profiles.py` refuses both
 sizes rather than duplicate them.
 
 Filaments are different. `derive_filaments.py` scales MVS off a CORE One
 high-flow pair, and Prusa publishes none below 0.4, so it refuses 0.25 and 0.3.
 `derive_std_filaments.py` builds a **standard** 0.25 without scaling, from the
-0.25 bases and drafts Prusa already has (see
-[Standard nozzles](#standard-nozzles-from-prusas-own-pieces)). 0.3 has neither.
+0.25 drafts and INDX 0.25 or standard bases Prusa already has (see
+[Standard nozzles](#standard-nozzles-from-prusas-own-pieces)).
 
 ### Standard nozzles
 
@@ -399,8 +403,9 @@ Almost nothing here is invented.
 
 PrusaResearch.ini contains per-nozzle INDX commons for 0.25, 0.3, 0.5, 0.6 and
 0.8. Every one defines a complete geometry set. Prusa's own 0.25 and 0.3 print
-profiles now use theirs; the high-flow 0.5, 0.6 and 0.8 commons are still
-unreleased scaffolding: no variant declares those sizes and no *released* print
+profiles now use theirs (there is no 0.3 INDX nozzle, so the 0.3 set is
+scaffolding); the high-flow 0.5, 0.6 and 0.8 commons are still unreleased
+scaffolding: no variant declares those sizes and no *released* print
 profile inherits from them. Prusa has drafted them, though, as commented-out
 sections: ten `@COREONEINDX HF0.5` / `HF0.6` / `HF0.8` print profiles — four,
 four and two (`PrusaResearch.ini:57206-57299`) — and six INDX printer drafts for
@@ -408,11 +413,13 @@ four and two (`PrusaResearch.ini:57206-57299`) — and six INDX printer drafts f
 `0.25`, `HF0.6` and `HF0.8` (`56634-56710`). Those count as sourced here, and
 the printer generator uses them (see
 [Prusa's commented-out drafts](#prusas-commented-out-drafts) and
-[Known gaps](#known-gaps)). The print drafts are not used: the HF0.5 and HF0.6
-ones only restate the unreachable 250/200 they inherit, and the two HF0.8 ones,
-though they set their own speeds, still run their perimeter at up to 65 mm³/s and
-inherit an infill of 75–98 mm³/s, where no HF0.8 filament Prusa ships allows more
-than 39 (see [Print profile speeds](#print-profile-speeds--derived-and-only-where-needed)).
+[Known gaps](#known-gaps)). The print drafts are not used. The HF0.5 and HF0.6
+ones restate the 250/200 speeds they inherit; their other keys are
+per-layer values (HF0.6 sets support and raft contact distance to the layer
+height, where the profiles here keep the common's 0.3 / 0.25). The two HF0.8
+ones set their own speeds, but every one overruns the filaments (39–65 mm³/s)
+and they inherit an infill of 75–98 mm³/s, where no HF0.8 filament Prusa ships
+allows more than 39 (see [Print profile speeds](#print-profile-speeds--derived-and-only-where-needed)).
 This repo also prefers the CORE One HF0.6 layer ladder and its own three-tier
 naming to Prusa's drafted Balanced/Draft/Coarse/Extra Coarse lineup.
 
@@ -448,16 +455,19 @@ They live in `Nozzle.extra` in `tools/nozzles.py`, in the same
 ### Print profile speeds — derived, and only where needed
 
 Of the five commons, only `*INDX_025_common*` has a real speed pass. The rest
-inherit `perimeter_speed = 250` and `infill_speed = 300` from `*INDX_common*` —
-at 0.68 × 0.25 that is 39–47 mm³/s, unreachable. No per-nozzle *common* carries
+inherit `perimeter_speed = 250` and `infill_speed = 300` from `*INDX_common*`.
+At HF0.6's 0.68 mm width and a 0.25 mm layer that is 39–47 mm³/s, past every
+`@COREONE HF0.6` filament Prusa ships (max 34). No per-nozzle *common* carries
 a pass, consistent with the missing variant declarations. Prusa's commented HF0.8
 print drafts do set profile-level speeds (perimeter 200, external 160/120, small
 160/120, solid 200/120), which at that common's 0.9 mm widths, each draft at its
 own layer height, is 39–65 mm³/s; and they leave infill at the inherited 300,
 which is 75–98 mm³/s. Prusa's own commented `Prusament PLA @COREONEINDX HF0.8`
-draft resolves to an MVS of 36, so the drafted perimeter at the 0.40 mm layer (65)
-and the inherited infill blow straight past it; they are not used either. The
-HF0.5 and HF0.6 drafts merely restate what they inherit.
+draft resolves to an MVS of 36, so every drafted speed (39.1 mm³/s at the
+lowest) and the inherited infill overrun it; they are not used either. The
+HF0.5 and HF0.6 drafts restate the inherited speeds; their other keys are
+per-layer values the profiles here do not use (see
+[Print profile geometry](#print-profile-geometry--sourced)).
 
 Where a size has flow targets in `nozzles.py`, six speeds are solved backward
 from them using PrusaSlicer's own extrusion geometry,
@@ -513,9 +523,10 @@ Three rules, beside the pressure advance described under
   are taken, and the bundle header records them. A per-nozzle common that
   changes any other key stops the build, as do a family with no sized
   counterpart upstream and a toolchanger key set anywhere but the common.
-- Every other key takes the CORE One value **only if INDX agreed with CORE One
-  at 0.4**. Where INDX already differs it made a deliberate toolchanger-specific
-  choice, and that choice is preserved. This is why Generic ABS keeps
+- Of the other keys, only the 11 cooling and speed-limit keys in `TRANSFER` take
+  the CORE One value, and **only if INDX agreed with CORE One at 0.4**; any other
+  key keeps the INDX 0.4 value. Where INDX already differs it made a deliberate
+  toolchanger-specific choice, and that choice is preserved. This is why Generic ABS keeps
   `filament_infill_max_crossing_speed = 140` rather than taking CORE One's `0`,
   and why `filament_cooling_final_speed = 0` survives throughout.
 
@@ -591,16 +602,18 @@ usually more specific than anything a CORE One delta can supply. At 2.5.12
 | Draft | Used |
 |---|---|
 | 4 INDX printers: 8T/4T at `HF0.6`, `HF0.8` | **yes**, for the keys in `DRAFT_ADOPT` |
-| 2 INDX printers: 8T/4T at `0.25` | **yes**, applied key for key — the sole source at that size |
+| 2 INDX printers: 8T/4T at `0.25` | **yes**, applied key for key; the CORE One 0.25 delta is not consulted |
 | 2 INDX 0.25 filaments: `Prusament PLA` / `PETG` | **yes**, applied as written |
-| 10 INDX print profiles at `HF0.5` / `HF0.6` / `HF0.8` (4 / 4 / 2) | no — HF0.5/HF0.6 restate what they inherit; HF0.8 sets its own speeds but leaves infill at 300 |
+| 10 INDX print profiles at `HF0.5` / `HF0.6` / `HF0.8` (4 / 4 / 2) | no — HF0.5/HF0.6 restate the inherited speeds and set per-layer contact distances and solid counts; HF0.8 sets its own speeds but every one overruns the filaments |
+| 3 INDX print profiles at `HF0.4` (Balanced Strength, Soluble Full, Soluble Interface) | no — `--std 0.4` copies only Prusa's four released HF0.4 prints |
 | 416 INDX filament drafts at `HF0.5` / `HF0.6` / `HF0.8` — 135 / 144 / 137 sections, 144 distinct filaments | pressure advance only; see [Known gaps](#known-gaps) |
+| 624 other INDX filament drafts: 137 at `HF0.4`, 244 unsized standard-nozzle `<mat> @COREONEINDX`, 125 standard 0.6, 113 standard 0.8, 5 hidden | no — no generator reads them; the standard-0.4 ones disagree with the 0.4 bundle in places (Prusament PETG PA 0.048 against 0.058) |
 
 For the high-flow printers, `build_printer_preset.py` applies the CORE One delta
 first, then compares the result against Prusa's draft for that size. (`--std 0.25`
-works differently: there is no CORE One delta to apply, so the draft is taken
-whole over the parent it names, with no comparison — at that size it is the only
-INDX-specific source there is.) Where they disagree on a
+works differently: the draft is taken whole over the parent it names, with no
+comparison. A CORE One HF0.4 → 0.25 delta does exist, but it is not consulted,
+and it disagrees with the draft on `retract_length` (0.8 against 0.7) and jerk.) Where they disagree on a
 key listed in `DRAFT_ADOPT` — the five retraction keys — the draft wins and the
 generated header records it. A disagreement on **any other key stops the build**,
 because Prusa having drafted a different value is evidence, not noise, and
@@ -688,6 +701,13 @@ a templates profile (lines 323/335 in `PresetComboBox::update`, 1138 in
 bundle's *print* profiles too. It is off by default; if the print profiles
 vanish, check it first.
 
+A fourth gate is type-agnostic too. `PresetCollection::update_compatible_internal`
+(`Preset.cpp:1387-1398`) marks a templates-vendor preset incompatible whenever a
+compatible non-templates preset has the same alias, the name before `@`. The
+standard 0.4 print profiles share all four aliases with Prusa's HF0.4 prints. It
+never fires only because the two sets bind on opposite `nozzle_high_flow[0]`
+tests, so no printer accepts both.
+
 ---
 
 ## Known gaps
@@ -703,9 +723,11 @@ vanish, check it first.
   restates the value its CORE One parent already supplies (FLEX 3.5, PLA 30,
   TPU 4), and taking it would swap the INDX flow baseline (2 / 28 / 2) for the
   CORE One one — and HF0.6 is test printed at 35. These are Prusa's own numbers,
-  though, so
-  `derive_filaments.py` prints every divergence instead of hiding it. Pressure
-  advance is the exception: it is taken from Prusa's figures, drafted or not.
+  though, so `derive_filaments.py` prints every divergence the drafts type on a
+  watched key (MVS, `slowdown_below_layer_time`) instead of hiding it. Drafts
+  that differ only through inherited values (Prusament ASA, PC Blend CF, Generic
+  PETG, Generic PLA) are not reported. Pressure advance is the exception: it is
+  taken from Prusa's figures, drafted or not.
 - **Only HF0.6 is validated.** The standard 0.4 and 0.25 values are all
   Prusa's, but sourced is not printed: they carry an UNVALIDATED banner until
   test printed on an INDX. Every generator marks an unvalidated size in the file
@@ -719,8 +741,11 @@ vanish, check it first.
 - **Draft keeps the common extrusion width.** Prusa's 0.4 Draft widens
   extrusions ~11% over its common parent. Left alone because 0.68 at 0.32 mm is
   already a healthy 2.1:1 aspect ratio, and widening compounds flow demand.
-- **High-flow filament binding includes `nozzle_high_flow[0]`.** Upstream
-  commons check diameter only. It keeps the HF0.6 filaments off a standard 0.6
+- **High-flow filament binding includes `nozzle_high_flow[0]`.** That is the
+  test Prusa's own sized HF filament families already use; it is an addition
+  only for Generic FLEX and Prusament TPU 95A, whose Prusa 0.6 family binds on
+  diameter alone. The HF0.6 *print* profiles bind on diameter alone, as
+  `*INDX_06hf_common*` does. It keeps the HF0.6 filaments off a standard 0.6
   nozzle, which nothing here supports.
 - **Standard 0.4 pressure advance is the HF0.4 preset's own value.** Prusa ships
   no concrete INDX standard-0.4 preset. For the PET, ABS and PC families the

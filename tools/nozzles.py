@@ -82,7 +82,7 @@ NOZZLES = {
     # ships its own "@COREONEINDX 0.25" print profiles built on it. Building
     # them here would only duplicate Prusa's, so the generator refuses.
     '0.25': Nozzle('0.25', '*INDX_025_common*', (0.07, 0.12, 0.15),
-                   flow=None, validated=True,
+                   flow=None, validated=False,  # Prusa's pass is sourced, not printed here
                    note='upstream speed pass present; speeds left untouched',
                    shipped='0.07mm Extra Fine / 0.10mm Fine ★ / 0.15mm Detail @COREONEINDX 0.25'),
 
@@ -91,15 +91,15 @@ NOZZLES = {
     # from the 0.4/0.6 anchors collapses below 0.4, so none was derived here.
     '0.3': Nozzle('0.3', '*INDX_03_common*', (0.12, 0.16, 0.20),
                   flow=None, validated=False,
-                  note='NO upstream speed pass and no trustworthy targets; '
-                       'inherits 250/300 from the 0.4 chain until measured',
+                  note='no INDX 0.3 nozzle exists; Prusa\'s 0.3 common and prints '
+                       'are scaffolding',
                   shipped='0.10mm Fine / 0.15mm Detail ★ / 0.20mm Balanced @COREONEINDX 0.3'),
 
     # Prusa renamed the high-flow commons *INDX_05_common* -> *INDX_05hf_common*
     # (likewise 0.6 and 0.8) by PrusaResearch 2.5.11.
 
-    # No upstream speed pass, and Prusa's commented HF0.5 print drafts only
-    # restate the unreachable 250/200 they inherit. FLOW_06 is scaled by one
+    # No upstream speed pass, and Prusa's commented HF0.5 print drafts restate
+    # the 250/200 they inherit (their other keys are per-layer). FLOW_06 is scaled by one
     # factor, the perimeter target interpolated between the 0.4 anchor (20.4
     # perim / 24.4 infill, measured off Prusa's 0.20mm Balanced profile) and the
     # 0.6 target. Being uniform, that leaves `top` at 10.0 although both anchors
