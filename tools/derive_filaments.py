@@ -87,6 +87,7 @@ FAMILY_SIZED = [(re.compile(r'^\*([A-Z]+)HFC1INDX\*$'), '*%sHFC1INDX*'),
                 (re.compile(r'^\*([A-Z]+)04PGC1INDX\*$'), '*%sPGC1INDX*')]
 # Keys a per-nozzle common may change, each reviewed with its reason. A per-nozzle
 # common that changes any other key refuses: review it and add it here first.
+# derive_std_filaments.py gates the commons under its STD bases on this list too.
 COMMON_ADOPT = {
     'filament_minimal_purge_on_wipe_tower':
         'Prusa sets the INDX wipe-tower minimal purge per nozzle (2.5.12: 14 at 0.6, '

@@ -398,14 +398,19 @@ refuses on any other changed key, on a per-nozzle common that drops a shared
 key, and on a missing or ambiguous family, so a re-pin cannot slip in an
 unreviewed toolchanger *key*. The gate is per key, not per value: a new value
 for an adopted key passes with exit 0 (the reasons quote 2.5.12 figures, so
-update them), and the gate covers `derive_filaments.py` only.
+update them).
 
 There is no `*C1INDX_04_common*` or `*C1INDX_025_common*` (filament; the print
 `*INDX_025_common*` is unrelated), so the standard bundles carry none.
-`derive_std_filaments.py` has no `COMMON_ADOPT` gate: it swaps in Prusa's STD
-and 0.25 family sections whole, so a per-nozzle common Prusa later puts under
-them would pass through unreviewed. Add the gate there before re-pinning to
-such a release.
+`derive_std_filaments.py` swaps in Prusa's STD and 0.25 family sections whole
+(`BASE_SWAP`), so the toolchanger keys arrive with them. It applies the same
+gate, through the same `sized_common()` / `common_delta()` and the same
+`COMMON_ADOPT`. Each preset must reach `*C1INDX_common*` through exactly one
+`BASE_SWAP` target and by no other route (`std_base()`); that refuses a new HF
+family `BASE_SWAP` has no STD base for, which would otherwise be kept, high-flow
+values and all. The common under that base is found by structure, and the same
+refusals apply. An adopted key comes in with the base: it is recorded in the
+header, `filament_notes` and stdout, and a preset's own value is kept over it.
 
 Filament binding: every generated filament keeps its HF0.4 base's
 `printer_model=~/(...)/` clause (`printer_models()` in `build_print_profiles.py`)

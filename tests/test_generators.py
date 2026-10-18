@@ -141,5 +141,110 @@ class PressureAdvanceSource(Tool):
                            '*C1INDX_FLEX_PA*, *C1INDX_PA_04_PA*')
 
 
+# --- derive_std_filaments.py: the per-nozzle common gate --------------------
+
+def std_material(mat='Prusament PLA', hf_family='*PLAHFC1INDX*', own=''):
+    """An INDX HF0.4 material on `hf_family`, with its CORE One HF0.4 and STD
+    parents."""
+    return [
+        '''
+        [filament:%s @COREONE]
+        filament_max_volumetric_speed = 15
+        compatible_printers_condition = printer_model=~/(COREONE)/
+        ''' % mat,
+        '''
+        [filament:%s @COREONE HF0.4]
+        filament_max_volumetric_speed = 25
+        ''' % mat,
+        '''
+        [filament:%s @COREONEINDX HF0.4]
+        inherits = %s @COREONE HF0.4; %s
+        compatible_printers_condition = %s
+        filament_max_volumetric_speed = 20
+        %s
+        ''' % (mat, mat, hf_family, COND_HF04, own),
+    ]
+
+
+HF_PLA = '''
+[filament:*PLAHFC1INDX*]
+inherits = *C1INDX_common*
+'''
+
+
+def std_pla(inherits='*C1INDX_common*', body=''):
+    return '''
+    [filament:*PLAPGC1INDX*]
+    inherits = %s
+    %s
+    ''' % (inherits, body)
+
+
+COMMON_04 = '''
+[filament:*C1INDX_04_common*]
+inherits = *C1INDX_common*
+%s
+'''
+
+
+class StdCommonGate(Tool):
+
+    def derive(self, *sections, nozzle='0.4'):
+        text = ini(VENDOR, INDX_COMMON, HF_PLA, *sections)
+        return self.run_tool('derive_std_filaments.py', text, '-n', nozzle)
+
+    def test_builds_on_the_shared_common(self):
+        out = self.assertBuilds(self.derive(std_pla(), *std_material()))
+        self.assertIn('[filament:Prusament PLA @COREONEINDX 0.4]', out)
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 10', out)
+        self.assertNotIn('per-nozzle INDX common', out)
+
+    def test_refuses_unreviewed_key_in_a_per_nozzle_common(self):
+        self.assertRefuses(
+            self.derive(COMMON_04 % 'filament_load_time = 12',
+                        std_pla('*C1INDX_04_common*'), *std_material()),
+            '*C1INDX_04_common* changes keys not in COMMON_ADOPT', 'filament_load_time')
+
+    def test_records_a_reviewed_key_from_a_per_nozzle_common(self):
+        out = self.assertBuilds(self.derive(
+            COMMON_04 % 'filament_minimal_purge_on_wipe_tower = 12',
+            std_pla('*C1INDX_04_common*'), *std_material()))
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 12', out)
+        self.assertIn("# From Prusa's per-nozzle INDX common *C1INDX_04_common*", out)
+        self.assertIn('filament_minimal_purge_on_wipe_tower: 10 -> 12, on 1 of 1 presets', out)
+        self.assertIn('*C1INDX_04_common*: filament_minimal_purge_on_wipe_tower 10 -> 12.', out)
+
+    def test_own_override_of_a_reviewed_key_is_kept_and_recorded(self):
+        out = self.assertBuilds(self.derive(
+            COMMON_04 % 'filament_minimal_purge_on_wipe_tower = 12',
+            std_pla('*C1INDX_04_common*'),
+            *std_material(own='filament_minimal_purge_on_wipe_tower = 15')))
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 15', out)
+        self.assertIn('the rest keep their own value', out)
+        self.assertIn('own filament_minimal_purge_on_wipe_tower 15 kept over 12', out)
+
+    def test_refuses_toolchanger_key_set_after_the_common(self):
+        # The STD base's own body overrides the common: a value nothing reviewed.
+        self.assertRefuses(
+            self.derive(std_pla(body='filament_minimal_purge_on_wipe_tower = 20'),
+                        *std_material()),
+            '*PLAPGC1INDX* sets INDX toolchanger key(s) filament_minimal_purge_on_wipe_tower '
+            'in its own body')
+
+    def test_refuses_a_family_with_no_std_base(self):
+        # A new HF family BASE_SWAP has no STD base for would otherwise be kept
+        # as it is, high-flow values and all, on a standard nozzle.
+        self.assertRefuses(
+            self.derive(std_pla(), '[filament:*PAHFC1INDX*]\ninherits = *C1INDX_common*\n',
+                        *std_material('Generic PA', '*PAHFC1INDX*')),
+            'Generic PA @COREONEINDX 0.4 reaches *C1INDX_common* through nothing')
+
+    def test_refuses_a_second_route_to_the_common(self):
+        self.assertRefuses(
+            self.derive(std_pla(), *std_material(
+                hf_family='*PLAHFC1INDX*; *C1INDX_common*')),
+            'also reaches *C1INDX_common* other than through *PLAPGC1INDX*')
+
+
 if __name__ == '__main__':
     unittest.main()
