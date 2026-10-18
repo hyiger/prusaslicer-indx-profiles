@@ -3,9 +3,12 @@
 Derive INDX filament presets for a standard (non-high-flow) 0.4 or 0.25 mm
 nozzle from Prusa's own profiles.
 
-Prusa's INDX filaments all bind on `nozzle_diameter[0]==0.4 and
-nozzle_high_flow[0]`, except Generic FLEX and Prusament TPU 95A, which bind on
-diameter alone. On a standard nozzle the filament list is almost empty.
+All 19 of Prusa's INDX filaments require `nozzle_high_flow[0]` except Generic
+FLEX and Prusament TPU 95A, which bind on diameter alone. Eleven pin
+`nozzle_diameter[0]==0.4`; the PET/ABS/BVOH eight bind by exclusion
+(`nozzle_diameter[0]!=0.8 and !=0.6 and !=0.5`), via *PETHFC1INDX* and
+*ABSHFC1INDX*, so those also reach a high-flow 0.25 or 0.3. Either way, on a
+standard nozzle the filament list is almost empty.
 
 PrusaResearch.ini already holds the pieces for standard nozzles, unused:
 INDX STD bases (*PLAPGC1INDX*, *PETPGC1INDX*, *ABSPGC1INDX*, *PCPGC1INDX*),
@@ -20,8 +23,11 @@ derive_filaments.py has to refuse.
     preset's own overrides (toolchanger retraction, purge, cooling) are kept.
   * filament_max_volumetric_speed = min(INDX HF0.4 value, CORE One STD value
     of the same filament).
-  * Pressure advance stays the INDX HF0.4 value. Prusa publishes no INDX STD
-    0.4 value, and on the CORE One its STD and HF0.4 values are close.
+  * Pressure advance stays the INDX HF0.4 preset's own value. Prusa ships no
+    concrete INDX STD 0.4 preset; for PET, ABS and PC its STD and HF 0.4 bases
+    share one PA base (*C1INDX_PET_04_PA* 0.048, _ABS_ 0.02, _PC_ 0.05), and a
+    concrete preset's own override is kept over it. Only the PLA family has no
+    INDX standard figure at all. On the CORE One, STD and HF0.4 are close.
 
 0.25 (standard)
   * Only filaments whose CORE One STD profile Prusa allows on a 0.25 nozzle.
@@ -30,7 +36,10 @@ derive_filaments.py has to refuse.
   * Prusament PLA and PETG are Prusa's drafts, as written.
   * Others get the CORE One STD parent plus the INDX 0.25 base (PLA, PET
     families) or INDX STD base (ABS, PC families). Nozzle-dependent own keys
-    are dropped. Cooling: ABS/PC families keep their own (those bases do not
+    are dropped so the swapped-in base supplies them. The INDX STD bases
+    (ABS/PC) define no filament_retract_* or filament_travel_max_lift, so for
+    those families the key is released to the printer preset's own value
+    instead; every such key is named in the preset's filament_notes. Cooling: ABS/PC families keep their own (those bases do not
     vary with the nozzle); PLA/PET families keep a value they set themselves
     that differs from the flagship's, follow the flagship's draft where they
     matched it at HF0.4, and otherwise take the 0.25 base.
@@ -129,13 +138,28 @@ def set_pa(gcode, pa):
     return re.sub(r'M572 S[\d.]+', 'M572 S' + pa, gcode)
 
 
+def supplied_by(S, parents):
+    """Keys the swapped-in parent chain actually defines."""
+    keys = set()
+    for p in parents:
+        if 'filament:' + p in S:
+            keys |= set(resolve(S, 'filament:' + p))
+    return keys
+
+
 def tune_025(own, parents, hf, S, drafts):
-    """Nozzle and cooling keys of a 0.25 preset that has no Prusa draft of its own."""
+    """Nozzle and cooling keys of a 0.25 preset that has no Prusa draft of its own.
+
+    Returns the keys dropped that no swapped-in parent re-supplies, which
+    therefore fall through to the printer preset's own value."""
     flagship = next((FLAGSHIP_025[p] for p in parents if p in FLAGSHIP_025), None)
     if flagship is None:
+        supplied = supplied_by(S, parents)
+        released = sorted(k for k in NOZZLE_KEYS - {'slowdown_below_layer_time'}
+                          if k in own and k not in supplied)
         for k in NOZZLE_KEYS - {'slowdown_below_layer_time'}:
             own.pop(k, None)
-        return
+        return released
     flag_hf = resolve(S, 'filament:' + flagship + INDX_SUFFIX)
     tune = drafts['filament:%s @COREONEINDX 0.25' % flagship]
     for k in (NOZZLE_KEYS | COOLING_KEYS) - {'filament_max_volumetric_speed', 'start_filament_gcode'}:
@@ -146,6 +170,7 @@ def tune_025(own, parents, hf, S, drafts):
             own[k] = tune[k]
     own.pop('filament_max_volumetric_speed', None)
     own.pop('start_filament_gcode', None)
+    return []
 
 
 def derive(S, drafts, dia):
@@ -166,6 +191,7 @@ def derive(S, drafts, dia):
 
         name = '%s @COREONEINDX %s' % (mat, dia)
         draft = drafts.get('filament:' + name) if dia == '0.25' else None
+        released = []
         if draft is not None:
             own = collections.OrderedDict(draft)
             parents = [p.strip() for p in own.pop('inherits').split(';')]
@@ -180,7 +206,7 @@ def derive(S, drafts, dia):
                     p = p[:-6]                                          # CORE One STD parent
                 parents.append(BASE_SWAP[dia].get(p, p))
             if dia == '0.25':
-                tune_025(own, parents, hf, S, drafts)
+                released = tune_025(own, parents, hf, S, drafts)
             else:
                 own.pop('filament_max_volumetric_speed', None)
             how = 'parents %s' % '; '.join(parents)
@@ -194,12 +220,19 @@ def derive(S, drafts, dia):
 
         pa_note = 'PA kept from HF0.4'
         if dia == '0.25':
-            if draft is None and not set(FLAGSHIP_025) & set(parents):
+            if draft is not None:
+                pa_note = 'PA from Prusa\'s own 0.25 draft'
+            elif set(FLAGSHIP_025) & set(parents):
+                # tune_025 dropped the whole INDX start G-code to reach the 0.25
+                # base's PA. Rebuild it around that value so the rest of the INDX
+                # start G-code - M573 R, M906 P2 - survives.
+                cfg['start_filament_gcode'] = set_pa(
+                    hf['start_filament_gcode'], pa_025(cfg['start_filament_gcode']))
+                pa_note = 'PA from the INDX 0.25 base'
+            else:
                 cfg['start_filament_gcode'] = set_pa(
                     hf['start_filament_gcode'], pa_025(resolve(S, co_std)['start_filament_gcode']))
                 pa_note = 'PA from the CORE One 0.25 value'
-            else:
-                pa_note = 'PA from the INDX 0.25 base'
 
         cfg.pop('renamed_from', None)  # a new preset, not a rename of the source
         cfg['compatible_printers_condition'] = COND[dia]
@@ -210,6 +243,9 @@ def derive(S, drafts, dia):
                       % (dia, mat + INDX_SUFFIX, how, cfg['filament_max_volumetric_speed'],
                          fmt(caps[0]), fmt(caps[1]), ', 0.25 chain %s' % fmt(caps[2]) if dia == '0.25' else '',
                          pa_note))
+        if released:
+            provenance += (' Released to the printer preset (no swapped-in INDX base '
+                           'defines them): %s.' % ', '.join(released))
         notes = cfg.get('filament_notes', '""').strip('"')
         cfg['filament_notes'] = '"%s"' % ((notes + '\\n' if notes else '') + provenance)
         built[name] = cfg

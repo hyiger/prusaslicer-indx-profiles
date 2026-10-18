@@ -130,7 +130,8 @@ def build_nozzle(vendor, noz, report):
         if noz.flow:
             for key, qk, wk in SPEED_KEYS:
                 o[key] = str(speed_for(noz.flow[qk], float(common[wk]), h))
-        o.update(noz.extra.get(tier_key, {}))
+        for key, (val, _why) in noz.extra.get(tier_key, {}).items():
+            o[key] = val
         # Prusa writes layer heights to two decimals: 0.20mm, 0.32mm.
         variants['%.2fmm %s @COREONEINDX %s' % (h, tier_label, noz.tag)] = o
 
@@ -245,7 +246,7 @@ def main():
     w('templates_profile = 1\n')
 
     report = []
-    for dia in sorted(wanted, key=float):
+    for dia in sorted(set(wanted), key=float):
         noz = NOZZLES[dia]
         common, variants = build_nozzle(vendor, noz, report)
         w('\n# ---- %s mm : resolved copy of Prusa %s\n' % (dia, noz.common))
