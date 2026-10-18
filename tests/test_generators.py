@@ -246,5 +246,82 @@ class StdCommonGate(Tool):
             'also reaches *C1INDX_common* other than through *PLAPGC1INDX*')
 
 
+# --- renamed_from never reaches a generated preset --------------------------
+
+PRINTERS = '''
+[printer:Prusa CORE One HF0.4 nozzle]
+nozzle_diameter = 0.4
+nozzle_high_flow = 1
+
+[printer:Prusa CORE One HF0.6 nozzle]
+nozzle_diameter = 0.6
+nozzle_high_flow = 1
+renamed_from = "Original Prusa CORE One HF0.6 nozzle"
+
+[printer:Prusa CORE One 0.4 nozzle]
+nozzle_diameter = 0.4
+nozzle_high_flow = 0
+renamed_from = "Original Prusa CORE One 0.4 nozzle"
+
+[printer:Prusa CORE One INDX 8T HF0.4 nozzle]
+printer_model = COREONE_INDX8T
+nozzle_diameter = 0.4,0.4
+nozzle_high_flow = 1,1
+default_print_profile = 0.20mm Balanced @COREONEINDX HF0.4
+default_filament_profile = "Prusament PLA @COREONEINDX HF0.4"
+renamed_from = "Original Prusa CORE One INDX 8T"
+
+; [printer:Prusa CORE One INDX 8T 0.25 nozzle]
+; inherits = Prusa CORE One INDX 8T HF0.4 nozzle
+; nozzle_diameter = 0.25,0.25
+; nozzle_high_flow = 0,0
+; renamed_from = "Prusa CORE One INDX 8T 0.25"
+'''
+
+
+class RenamedFrom(Tool):
+
+    def printer(self, *args):
+        result = self.run_tool('build_printer_preset.py', ini(VENDOR, PRINTERS), *args,
+                               out='printer')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def emitted(self, name):
+        with open(os.path.join(self.out, name), encoding='utf-8') as f:
+            return f.read()
+
+    def test_printer_hf(self):
+        self.printer('-n', '0.6')
+        out = self.emitted('Prusa CORE One INDX 8T HF0.6 nozzle.ini')
+        self.assertIn('nozzle_diameter = 0.6,0.6', out)
+        self.assertNotIn('renamed_from', out)
+
+    def test_printer_std(self):
+        self.printer('-n', '0.4', '-n', '0.25', '--std')
+        for dia in ('0.4', '0.25'):
+            out = self.emitted('Prusa CORE One INDX 8T %s nozzle.ini' % dia)
+            self.assertIn('nozzle_high_flow = 0,0', out)
+            self.assertNotIn('renamed_from', out)
+
+    def test_print_bundle_hf(self):
+        widths = '\n'.join('%s = 0.68' % k for k in (
+            'perimeter_extrusion_width', 'external_perimeter_extrusion_width',
+            'infill_extrusion_width', 'solid_infill_extrusion_width',
+            'top_infill_extrusion_width'))
+        text = ini(VENDOR, '''
+            [print:*INDX_06hf_common*]
+            compatible_printers_condition = nozzle_diameter[0]==0.6
+            min_bead_width = 85%%
+            top_solid_layers = 4
+            bottom_solid_layers = 3
+            renamed_from = "*INDX_06_common*"
+            %s
+            ''' % widths)
+        out = self.assertBuilds(self.run_tool('build_print_profiles.py', text, '-n', '0.6'))
+        self.assertIn('[print:0.25mm Balanced ★ @COREONEINDX HF0.6]', out)
+        self.assertNotIn('renamed_from', out)
+
+
 if __name__ == '__main__':
     unittest.main()

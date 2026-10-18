@@ -174,6 +174,7 @@ def build(vendor, drafts, dia, model, report):
 
     draft = draft_for(drafts, dia, model)
     cfg = dict(resolve(vendor, 'printer:' + base_name))
+    cfg.pop('renamed_from', None)  # a new preset, not a rename of the base
     changed = apply_delta(vendor, cfg, ref_name, 'HF' + dia,
                           lambda key: retarget_hf(key, dia), report, draft)
     apply_draft(cfg, draft, changed, report, 'HF' + dia)
@@ -198,6 +199,8 @@ def apply_delta(vendor, cfg, ref_name, label, retarget, report, draft=None):
     draft = draft or {}
     ref04 = resolve(vendor, 'printer:' + REF_BASE)
     ref = resolve(vendor, 'printer:' + ref_name)
+    for r in (ref04, ref):
+        r.pop('renamed_from', None)  # each names its own preset; never a nozzle delta
 
     delta = sorted(k for k in set(ref04) | set(ref) if ref04.get(k) != ref.get(k))
     unexpected = [k for k in delta if k not in TRANSFER and k not in RETARGET
@@ -287,6 +290,7 @@ def build_std(vendor, drafts, dia, model, report):
         raise SystemExit('refusing: unknown model %s' % model)
     printer_model, base_name = MODELS[model]
     cfg = dict(resolve(vendor, 'printer:' + base_name))
+    cfg.pop('renamed_from', None)  # a new preset, not a rename of the base
     tag = lambda value: value.replace(STD_TAG[0], STD_TAG[1] % dia)
 
     if dia in STD_PAIR:
@@ -303,7 +307,9 @@ def build_std(vendor, drafts, dia, model, report):
             raise SystemExit('refusing: no "%s" draft in PrusaResearch.ini' % draft_name)
         draft = dict(drafts[draft_name])
         parent = draft.pop('inherits', '')
+        draft.pop('renamed_from', None)  # names Prusa's own preset, not this one
         cfg = dict(resolve(vendor, 'printer:' + parent))
+        cfg.pop('renamed_from', None)
         changed = []
         for key, value in draft.items():
             changed.append((key, cfg.get(key, ''), value, 'Prusa\'s INDX %s draft' % dia))

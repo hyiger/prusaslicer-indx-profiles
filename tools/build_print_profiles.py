@@ -129,6 +129,7 @@ SPEED_KEYS = [('perimeter_speed', 'perim', 'perimeter_extrusion_width'),
 
 def build_nozzle(vendor, noz, report):
     common = collections.OrderedDict(resolve(vendor, 'print:' + noz.common))
+    common.pop('renamed_from', None)  # new presets, not a rename of the common
 
     for key, (val, _why) in COMMON_EDITS.items():
         if key == 'interlocking_beam_width':

@@ -218,11 +218,12 @@ holds.
   sections must be flattened too, as every generator here does.
 - **`renamed_from` is never inherited.** `flatten_configbundle_hierarchy`
   skips it when merging parents: it belongs to one concrete preset. `resolve()`
-  drops inherited ones the same way. The `--std` print path and both filament
-  generators also pop the base's own (`build_print_profiles.py:180`,
-  `derive_filaments.py:390`, `derive_std_filaments.py:258`). `build_nozzle()`
-  and `build_printer_preset.py` do not, and emit none only because Prusa's
-  INDX commons and HF0.4 printers carry none.
+  drops inherited ones the same way, and every generator also pops the base's
+  own, since each emits new presets, not renames: `build_nozzle()`, the `--std`
+  print path, `build_printer_preset.py` (the base, the 0.25 draft and its
+  parent, and both sides of the CORE One delta, where it would otherwise read
+  as an unreviewed key) and both filament generators. Prusa's INDX sections
+  carry none at 2.5.12, so this changes no artifact.
 - **Prusa keeps unreleased profiles as comments.** `; [printer:...]` /
   `; key = value` blocks in PrusaResearch.ini. `load_drafts()` reads them. They
   are Prusa's own intent, so they count as sourced. At 2.5.12 (unchanged from
