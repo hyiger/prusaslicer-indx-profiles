@@ -37,7 +37,7 @@ import sys
 from nozzles import NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, speed_for
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.4.0'
+BUNDLE_VERSION = '0.4.1'
 
 # Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
 STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}
@@ -104,6 +104,18 @@ def resolve(sections, name, seen=None):
         if k != 'inherits':
             out[k] = v
     return out
+
+
+def printer_models(cond):
+    """The leading `printer_model=~/(...)/` clause of a compatible_printers_condition.
+
+    Prusa scopes INDX filaments per family (since 2.5.12 the ABS, PC and PA ones
+    leave out the CORE One L, which gets its own chamber values), so a derived
+    preset keeps its base's clause rather than a fixed list of models."""
+    m = re.match(r'\s*(printer_model\s*=~\s*/[^/]*/)', cond or '')
+    if not m:
+        raise SystemExit('refusing: no printer_model clause to keep in %r' % (cond or '')[:80])
+    return m.group(1)
 
 
 SPEED_KEYS = [('perimeter_speed', 'perim', 'perimeter_extrusion_width'),

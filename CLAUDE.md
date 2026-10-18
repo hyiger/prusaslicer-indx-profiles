@@ -23,9 +23,10 @@ that.
    rejecting 0.25/0.3, and `nozzles.py` giving 0.3 no flow targets. A loud
    failure beats a plausible fabrication.
 2. **Record provenance for anything changed.** `COMMON_EDITS` and `Nozzle.extra`
-   in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, and `TRANSFER` /
-   `RETARGET` / `DRAFT_ADOPT` in `build_printer_preset.py` all carry a reason
-   string per key, and every generator writes its changed keys and their reasons
+   in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, `TRANSFER` /
+   `RETARGET` / `DRAFT_ADOPT` in `build_printer_preset.py`, `COMMON_ADOPT` in
+   `derive_filaments.py` and `STD_SKIP` in `derive_std_filaments.py` all carry a
+   reason string per key, and every generator writes its changed keys and their reasons
    into the file it emits. Keep that pattern: a new override channel without a
    reason string is the failure mode to watch for.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
@@ -84,17 +85,25 @@ python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.4-filaments.i
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.25-filaments.ini -n 0.25
 ```
 
-The committed artifacts were generated from PrusaResearch **2.5.11**. PrusaSlicer
+The committed artifacts were generated from PrusaResearch **2.5.12**. PrusaSlicer
 auto-updates that file in place, so the path above may now hold a newer release:
 check `grep -m1 ^config_version "$PR"` before regenerating. Running the recipe on
 a newer file silently re-pins every artifact to it — that is a deliberate,
 reviewable change, not a regeneration. PrusaSlicer snapshots the old bundle
 before each upgrade (`<datadir>/snapshots/<timestamp>/vendor/PrusaResearch.ini`,
 `reason = upgrade`), so point `PR` there to reproduce the committed artifacts.
-Line numbers cited in this file and the README are 2.5.11's. 2.5.12 does not shift
-them uniformly — the printer and print drafts move by 10, the `*C1INDX_*_PA*`
-sections by 36 — so re-grep the section name rather than applying an offset. Run the
-tools without `python3 -I`: they import each other from `tools/`.
+Line numbers cited in this file and the README are 2.5.12's. A release does not
+shift them uniformly — 2.5.11 → 2.5.12 moved the printer and print drafts by 10
+and the `*C1INDX_*_PA*` sections by anything from 32 to 125 — so re-grep the
+section name rather than applying an offset.
+
+When re-pinning, diff the old and new `PrusaResearch.ini`, not just the
+artifacts. An upstream change the generators do not read leaves every artifact
+unchanged: 2.5.12's `*C1INDX_06_common*` changed nothing until
+`derive_filaments.py` was taught to apply it. Grep for new INDX filaments and
+print profiles, new commented drafts (`^; \[`), changes to `*C1INDX_*_PA*`, and
+changes to the INDX `compatible_printers_condition` lines. Run the tools without
+`python3 -I`: they import each other from `tools/`.
 
 After any change to the generators, confirm the committed bundle is still
 reproduced exactly:
@@ -168,10 +177,10 @@ holds.
   carry one.
 - **Prusa keeps unreleased profiles as comments.** `; [printer:...]` /
   `; key = value` blocks in PrusaResearch.ini. `load_drafts()` reads them. They
-  are Prusa's own intent, so they count as sourced. At 2.5.11 there are more than
-  the 0.25 pair this file used to name:
+  are Prusa's own intent, so they count as sourced. At 2.5.12 (unchanged from
+  2.5.11) there are more than the 0.25 pair this file used to name:
   - **6 INDX printers** — 8T and 4T at `0.25`, `HF0.6`, `HF0.8`
-    (`56624-56698`). Used, two ways. The four HF drafts: `build()` applies the
+    (`56634-56710`). Used, two ways. The four HF drafts: `build()` applies the
     CORE One delta, compares the result against the draft, adopts the keys in
     `DRAFT_ADOPT` and refuses on any other disagreement. The two `0.25` drafts:
     `build_std()` re-resolves the parent the draft names and applies every draft
@@ -181,7 +190,7 @@ holds.
     machine), which is why only uniform scalar values are taken and re-widened.
   - **2 INDX 0.25 filaments** — `Prusament PLA` / `PETG`. Used as written.
   - **10 INDX print profiles** at `HF0.5`/`HF0.6`/`HF0.8`, four / four / two
-    (`57196-57289`). Not used: the HF0.5 and HF0.6 drafts only restate the
+    (`57206-57299`). Not used: the HF0.5 and HF0.6 drafts only restate the
     unreachable 250/200 they inherit; the two HF0.8 drafts set their own
     200 / 160-120 / 160-120 / 200-120 but leave infill at the inherited 300 (see
     "Data model"); and the HF0.6 ladder/tier naming is taken from CORE One HF0.6
@@ -252,6 +261,49 @@ there is one. Prusa's INDX PA **falls** as the nozzle grows (PLA 0.031 → 0.02,
 PET 0.048 → 0.031, ABS 0.02 → 0.015, PC 0.05 → 0.025), which is the opposite of
 what a CHT's longer melt path would suggest, so do not "correct" it upward.
 
+Since 2.5.12 Prusa also publishes the INDX toolchanger common per nozzle:
+`*C1INDX_06_common*` and `*C1INDX_08_common*` inherit `*C1INDX_common*` and
+change two keys (wipe-tower minimal purge 10 → 14 / 20,
+`filament_retract_restart_extra_toolchange` unset → 0.04 / 0.05), and the 0.6
+and 0.8 family sections inherit them in its place. Prusa's sized chains swap the
+whole family section, not just the common: `Prusament PLA @COREONEINDX HF0.4`
+inherits `*PLAHFC1INDX*`, its commented HF0.6 draft `*PLA06HFC1INDX*`. (Most
+drafts do; the BVOH drafts carry no INDX family and PC Blend CF's takes
+`*PC06PGC1INDX*`, which stands on the same common.) So
+`derive_filaments.py` works per base:
+- the 0.4 family is the one section of the base's chain that inherits
+  `*C1INDX_common*` directly (structure);
+- its sized counterpart is named by the same token swap PA uses
+  (`*PLAHFC1INDX*` → `*PLA06HFC1INDX*`, `*FLEX04PGC1INDX*` → `*FLEX06PGC1INDX*`),
+  and a missing one refuses;
+- the per-nozzle common is whichever parent of that counterpart reaches
+  `*C1INDX_common*`, under any name (structure again), so a rename or an
+  intermediate section is followed, not silently dropped;
+- nothing after that common in the counterpart (its own body, later parents)
+  may set a toolchanger key, or the build refuses: such a value would override
+  the common and be misattributed to it;
+- the base is re-resolved with the family swapped, and each `COMMON_ADOPT` key
+  takes the value from that chain.
+
+The swap makes the 0.4 family's body and anything inherited before it give way,
+as in Prusa's chain. A value the 0.4 preset sets in its own body survives as an
+own override, whether or not it agreed with anything; that is this repo's choice,
+not Prusa's (Prusa's HF0.6 drafts for FLEX and TPU 95A resolve to purge 14; ours
+keep their 0.4 15). Do not reduce this to a
+value comparison against `*C1INDX_common*`: a key it leaves unset can arrive from a
+generic CORE One or MK4 ancestor, and an equality test would mistake that for an
+INDX choice. Only keys in `COMMON_ADOPT` (key → reason, like `DRAFT_ADOPT`) are
+taken. The tool refuses on any other changed key, on a per-nozzle common that drops
+a shared key, and on a missing or ambiguous family, so a re-pin cannot slip a
+toolchanger change in unreviewed. There is no `04` or `025` common, so the
+standard bundles are untouched.
+
+Filament binding: every generated filament keeps its HF0.4 base's
+`printer_model=~/(...)/` clause (`printer_models()` in `build_print_profiles.py`)
+and appends its own nozzle test. Prusa scopes the model list per family — since
+2.5.12 ABS, PC and PA leave out the CORE One L INDX, which gets its own
+`*C1LINDX_CH_*` chamber values — so a fixed list would silently diverge.
+
 ## Conventions
 
 - Profile names: `<layer>mm <Tier> @COREONEINDX HF<dia>`, layer height to two
@@ -286,10 +338,22 @@ what a CHT's longer melt path would suggest, so do not "correct" it upward.
   at 0.25 and 0.3 there is nothing in either family to scale against. (The
   non-HF fallback is load-bearing, not a corner case: 9 of the 19 committed 0.6
   presets come from an `@COREONE` -> `@COREONE 0.6` pair. At 0.5 there is no
-  plain `@COREONE 0.5`, so `-n 0.5` covers only 8 of the 19 materials.)
+  plain `@COREONE 0.5`, so `-n 0.5` covers only 8 of the 20 materials.)
 - **…but `derive_std_filaments.py` builds 0.25.** It scales nothing: a
   standard 0.25 is built from Prusa's INDX 0.25 bases and drafts. The two tools
   answer different questions.
+- **Generic PVA is in no bundle.** Prusa added it in 2.5.12 as an INDX-only
+  preset with no CORE One PVA. `derive_filaments.py` prints it as
+  `NO REFERENCE - skipped`; `derive_std_filaments.py` skips it through
+  `STD_SKIP`, a reviewed, named list, and refuses if a CORE One STD PVA ever
+  appears so the entry gets reviewed again. Any other material without a CORE
+  One STD counterpart still refuses. Adding to `STD_SKIP` is a human decision.
+- **The standard ABS presets bind to `COREONE_INDX4T` although Prusa's
+  `*ABSPGC1INDX*` does not.** At 2.5.12 that base reads
+  `printer_model=~/(COREONE_INDX8T|COREONE_INDX4)/`, which under full-string
+  `regex_match` never matches `COREONE_INDX4T`. The clause is taken from the
+  HF0.4 base (`*ABSHFC1INDX*`, which spells both models), never from the
+  swapped-in STD base, so the upstream typo does not reach the bundle.
 - **`build_print_profiles.py` refuses 0.25 and 0.3.** Prusa ships print
   profiles for both (`shipped` in `nozzles.py`); building them would duplicate
   Prusa's.

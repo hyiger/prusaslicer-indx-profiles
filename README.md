@@ -69,7 +69,9 @@ convention (`0.10mm Fine` / `0.15mm Detail` / `0.20mm Balanced ★` /
 
 ### Filament presets (0.6 mm)
 
-All nineteen materials Prusa publishes for the INDX:
+Nineteen of the twenty materials Prusa publishes for the INDX. The twentieth,
+Generic PVA (new in PrusaResearch 2.5.12), exists only as an INDX preset
+upstream: there is no CORE One PVA at any size to scale from, so it is skipped.
 
 | Material | MVS 0.4 → 0.6 | Material | MVS 0.4 → 0.6 |
 |---|---|---|---|
@@ -119,16 +121,20 @@ for how each one is built.
 n/a means not built: Prusa does not allow carbon fiber or Woodfill on a 0.25
 nozzle. Generic FLEX and Prusament TPU 95A are not rebuilt: Prusa's own INDX
 presets for them already accept a standard 0.4, and the INDX has no 0.25 FLEX
-base.
+base. Generic PVA is not built at either size: with no CORE One PVA there is no
+standard parent to swap in and no standard-nozzle MVS to cap at.
 
 ---
 
 ## Requirements
 
 - PrusaSlicer **2.9.6** or newer
-- Prusa Research vendor bundle **config_version 2.5.11** or newer. Everything
-  here was generated from 2.5.11, and the standard 0.25 setup uses the 0.25
-  print profiles it ships.
+- Prusa Research vendor bundle **config_version 2.5.12** or newer. Everything
+  here was generated from 2.5.12, and the standard 0.25 setup uses the 0.25
+  print profiles Prusa ships.
+- INDX firmware **6.9.2** or newer, the version Prusa's 2.5.12 G-code asks for:
+  the printer presets' start G-code carries `M115 U6.9.2+16336`, which warns on
+  older firmware.
 - A CORE One INDX 8T or 4T
 
 Your PrusaSlicer data directory:
@@ -397,9 +403,9 @@ profiles now use theirs; the high-flow 0.5, 0.6 and 0.8 commons are still
 unreleased scaffolding: no variant declares those sizes and no *released* print
 profile inherits from them. Prusa has drafted them, though, as commented-out
 sections: ten `@COREONEINDX HF0.5` / `HF0.6` / `HF0.8` print profiles — four,
-four and two (`PrusaResearch.ini:57196-57289`) — and six INDX printer drafts for
+four and two (`PrusaResearch.ini:57206-57299`) — and six INDX printer drafts for
 8T and 4T at
-`0.25`, `HF0.6` and `HF0.8` (`56624-56698`). Those count as sourced here, and
+`0.25`, `HF0.6` and `HF0.8` (`56634-56710`). Those count as sourced here, and
 the printer generator uses them (see
 [Prusa's commented-out drafts](#prusas-commented-out-drafts) and
 [Known gaps](#known-gaps)). The print drafts are not used: the HF0.5 and HF0.6
@@ -484,15 +490,42 @@ cooling-move behaviour). The 0.4 → size step comes from Prusa's own CORE One
 `HF0.4` / `HF<dia>` pair for that material. Materials with no high-flow profile
 fall back to the non-HF `@COREONE` → `@COREONE <dia>` pair.
 
-Two rules:
+Three rules, beside the pressure advance described under
+[Calibrate before trusting these](#calibrate-before-trusting-these):
 
 - `filament_max_volumetric_speed` is **ratio-scaled** off the INDX 0.4 value,
   because the INDX toolhead has its own flow baseline distinct from CORE One.
+- **INDX toolchanger keys that Prusa sets per nozzle come from its per-nozzle
+  common.** Since 2.5.12 Prusa's 0.6 and 0.8 INDX family sections inherit
+  `*C1INDX_06_common*` / `*C1INDX_08_common*` in place of `*C1INDX_common*`:
+  wipe-tower minimal purge 10 → 14 (20 at 0.8), and
+  `filament_retract_restart_extra_toolchange` 0.04 (0.05 at 0.8). They arrived
+  together with a toolchange G-code that no longer adds a fixed 0.04 mm to its
+  post-toolchange retract, and which still records `retract_length +
+  retract_restart_extra_toolchange` as retracted. Most of Prusa's HF0.6 drafts
+  inherit a sized INDX family section in place of the 0.4 one
+  (`*PLAHFC1INDX*` → `*PLA06HFC1INDX*`), so the generator re-resolves each INDX
+  0.4 preset with its family swapped that way and takes these keys from that
+  chain. A value the 0.4 preset sets in its own body is kept, as an own
+  override, whether or not it agreed with anything: Generic FLEX and Prusament
+  TPU 95A keep their own purge of 15, where Prusa's HF0.6 drafts for them
+  resolve to 14. Only keys reviewed into `COMMON_ADOPT`, each with its reason,
+  are taken, and the bundle header records them. A per-nozzle common that
+  changes any other key stops the build, as do a family with no sized
+  counterpart upstream and a toolchanger key set anywhere but the common.
 - Every other key takes the CORE One value **only if INDX agreed with CORE One
   at 0.4**. Where INDX already differs it made a deliberate toolchanger-specific
   choice, and that choice is preserved. This is why Generic ABS keeps
   `filament_infill_max_crossing_speed = 140` rather than taking CORE One's `0`,
   and why `filament_cooling_final_speed = 0` survives throughout.
+
+Every preset, high-flow or standard, keeps the `printer_model` clause of its
+INDX HF0.4 base. Since 2.5.12 Prusa binds its ABS, PC and PA INDX families to
+the CORE One INDX alone and gives the CORE One L INDX its own chamber values
+(`*C1LINDX_CH_*`, 60/50 °C against 55/40), so Generic ABS, Prusament ASA, both
+PC Blends and both BVOHs bind to `COREONE_INDX8T|COREONE_INDX4T`; the rest
+also list `COREONEL_INDX8T|COREONEL_INDX4T`, as Prusa's do. PrusaResearch 2.5.12
+has no CORE One L INDX printer yet, so today this changes nothing you can see.
 
 Prusa's own `filament_notes` are kept and the derivation note is appended:
 the INDX start G-code reads markers such as `MBL160` (Prusament TPU 95A) from
@@ -552,8 +585,8 @@ the swapped-in chain:
 Prusa keeps unreleased work in `PrusaResearch.ini` as commented-out sections —
 `; [printer:...]` then `; key = value`. `load_drafts()` reads them, and they
 count as sourced here: they are Prusa's own values, written for the INDX, and
-usually more specific than anything a CORE One delta can supply. At 2.5.11 they
-are:
+usually more specific than anything a CORE One delta can supply. At 2.5.12
+(unchanged from 2.5.11) they are:
 
 | Draft | Used |
 |---|---|
@@ -617,12 +650,12 @@ whatsoever**. Three separate mechanisms each rule out one source:
 
 | Source | Count | Result | Reason |
 |---|---|---|---|
-| `@COREONEINDX HF0.4` | 19 | excluded | all but FLEX and TPU 95A require `nozzle_high_flow[0]`; 11 pin `nozzle_diameter[0]==0.4` and the PET/ABS/BVOH eight bind by exclusion (`!=0.8 and !=0.6 and !=0.5`) |
+| `@COREONEINDX HF0.4` | 20 | excluded | all but FLEX and TPU 95A require `nozzle_high_flow[0]`; 11 pin `nozzle_diameter[0]==0.4` and the PET/ABS/BVOH/PVA nine bind by exclusion (`!=0.8 and !=0.6 and !=0.5`) |
 | `@COREONE HF0.6` | 143 | excluded | `printer_model` uses `regex_match`, so `COREONE_INDX8T` does not match `/(COREONE\|COREONEOAK\|…)/` |
 | `Templates.ini` | 201 | excluded | every profile carries `printer_notes!~/.*NO_TEMPLATES.*/`, and Prusa puts `NO_TEMPLATES` in the INDX printer notes |
 
-Counts are from PrusaResearch 2.5.11. A standard nozzle hits the same wall
-one step earlier: 17 of the 19 INDX filaments also require
+Counts are from PrusaResearch 2.5.12 and Templates.ini 2.0.4. A standard nozzle
+hits the same wall one step earlier: 18 of the 20 INDX filaments also require
 `nozzle_high_flow[0]`, leaving only Generic FLEX and Prusament TPU 95A on a
 standard 0.4, and none on a 0.25.
 
@@ -707,6 +740,12 @@ vanish, check it first.
   this bundle's copies then. The printer presets are exposed the same way, and
   Prusa already has commented drafts for 8T/4T at 0.25, HF0.6 and HF0.8 — there
   `load_presets` simply skips yours in favour of Prusa's, which is harmless.
+- **Generic PVA is not built at any size.** Prusa added it in 2.5.12 as an
+  INDX-only preset (Verbatim BVOH plus its own overrides), with no CORE One PVA
+  behind it. `derive_filaments.py` has no CORE One pair to scale its MVS by and
+  skips it; `derive_std_filaments.py` skips it by name (`STD_SKIP`), so any
+  *other* new material without a CORE One standard profile still stops the
+  build. Prusa's own HF0.4 preset covers a high-flow 0.4.
 - **The personal presets in `personal/` don't import.** They carry two keys no
   PrusaSlicer defines, so Import Config Bundle rejects them. See
   `personal/README.md`; the fix belongs in the Filament DB exporter.
