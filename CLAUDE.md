@@ -42,13 +42,14 @@ that.
    Where the reasons surface varies. The printer presets list every changed key
    in their header, with the `DRAFT_ADOPT` / `DOCK_FAN` reason or a generic line
    (`TRANSFER`, `RETARGET`, the 0.25 draft). Each filament preset records its
-   MVS, PA and per-nozzle-common provenance in `filament_notes`, and the
-   high-flow bundle's header also prints the `COMMON_ADOPT` reasons. `STD_SKIP`
-   reasons and `derive_filaments.py`'s `TRANSFER` moves go to stdout only.
-   `build_print_profiles.py` writes no reasons at all: the `COMMON_EDITS`,
-   `Nozzle.extra` and `STD_EDITS` reasons live only in the source. Keep the
-   reason strings: a new override channel without one is the failure mode to
-   watch for.
+   MVS, PA and per-nozzle-common provenance in `filament_notes`, and a filament
+   bundle's header prints the `COMMON_ADOPT` reasons for any per-nozzle common
+   it uses (at 2.5.12 only the high-flow bundle uses one). `STD_SKIP` reasons
+   and `derive_filaments.py`'s `TRANSFER` moves go to stdout only. The print
+   bundle's header lists, per size, every `COMMON_EDITS`, `Nozzle.extra` and
+   `STD_EDITS` key whose value it changes, with its reason (`why_lines()`), and
+   the flow targets the speeds are solved from. Keep the reason strings: a new
+   override channel without one is the failure mode to watch for.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
    warning banner in stdout and a comment in the emitted file, in the print
    bundle, the printer presets and the high-flow filament bundles alike; and

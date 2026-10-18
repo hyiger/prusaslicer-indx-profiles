@@ -453,7 +453,10 @@ deviates from the resolved common in seven keys, `0.32mm Draft` in six, and
 | `min_bead_width` | Draft | 90% | Prusa's own Draft tier uses 90% (`0.25mm Draft @COREONEINDX HF0.4`); a deliberate transfer of that tier choice, not the 85% every `@COREONE HF0.6` profile carries |
 
 They live in `Nozzle.extra` in `tools/nozzles.py`, in the same
-`(value, reason)` shape as the table above.
+`(value, reason)` shape as the table above. The bundle's header lists every key
+in both tables whose value it changes, with its reason, ahead of each size's
+profiles (`notes` is already empty upstream, so it is not listed). The
+standard 0.4 section does the same for its two `STD_EDITS` keys.
 
 ### Print profile speeds — derived, and only where needed
 

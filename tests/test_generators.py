@@ -248,6 +248,23 @@ class StdCommonGate(Tool):
 
 # --- renamed_from never reaches a generated preset --------------------------
 
+def print_common_06(extra=''):
+    """*INDX_06hf_common* with the keys build_nozzle() needs at 0.6."""
+    widths = '\n'.join('%s = 0.68' % k for k in (
+        'perimeter_extrusion_width', 'external_perimeter_extrusion_width',
+        'infill_extrusion_width', 'solid_infill_extrusion_width',
+        'top_infill_extrusion_width'))
+    return '''
+[print:*INDX_06hf_common*]
+compatible_printers_condition = nozzle_diameter[0]==0.6
+min_bead_width = 85%%
+top_solid_layers = 4
+bottom_solid_layers = 3
+%s
+%s
+''' % (widths, extra)
+
+
 PRINTERS = '''
 [printer:Prusa CORE One HF0.4 nozzle]
 nozzle_diameter = 0.4
@@ -305,22 +322,48 @@ class RenamedFrom(Tool):
             self.assertNotIn('renamed_from', out)
 
     def test_print_bundle_hf(self):
-        widths = '\n'.join('%s = 0.68' % k for k in (
-            'perimeter_extrusion_width', 'external_perimeter_extrusion_width',
-            'infill_extrusion_width', 'solid_infill_extrusion_width',
-            'top_infill_extrusion_width'))
-        text = ini(VENDOR, '''
-            [print:*INDX_06hf_common*]
-            compatible_printers_condition = nozzle_diameter[0]==0.6
-            min_bead_width = 85%%
-            top_solid_layers = 4
-            bottom_solid_layers = 3
-            renamed_from = "*INDX_06_common*"
-            %s
-            ''' % widths)
+        text = ini(VENDOR, print_common_06('renamed_from = "*INDX_06_common*"'))
         out = self.assertBuilds(self.run_tool('build_print_profiles.py', text, '-n', '0.6'))
         self.assertIn('[print:0.25mm Balanced ★ @COREONEINDX HF0.6]', out)
         self.assertNotIn('renamed_from', out)
+
+
+# --- build_print_profiles.py: the header records every change and its reason
+
+HF04_PRINT = '''
+[print:0.20mm Balanced @COREONEINDX HF0.4]
+compatible_printers_condition = printer_model=~/(COREONE_INDX8T)/ and nozzle_diameter[0]==0.4 and nozzle_high_flow[0]
+layer_height = 0.2
+'''
+
+
+class PrintBundleReasons(Tool):
+
+    def header(self, text, *args):
+        out = self.assertBuilds(self.run_tool('build_print_profiles.py', text, *args))
+        return [l for l in out.splitlines() if l.startswith('#')]
+
+    def test_common_and_tier_edits_carry_their_reasons(self):
+        lines = self.header(ini(VENDOR, print_common_06('bridge_speed = 50\nnotes = ')),
+                            '-n', '0.6')
+        for line in ('#   bridge_speed: 50 -> 30',
+                     '#       inherited 50 is ~14 mm3/s at a 0.6 bridge',
+                     '#   interlocking_beam_width: unset -> 1.2',
+                     '#   compatible_printers: unset -> (empty)',
+                     '#   0.20mm Detail @COREONEINDX HF0.6: top_solid_layers: 4 -> 5',
+                     '#   0.32mm Draft @COREONEINDX HF0.6: min_bead_width: 85% -> 90%'):
+            self.assertIn(line, lines)
+        # notes is already empty upstream, so COMMON_EDITS changes nothing there.
+        self.assertFalse([l for l in lines if l.startswith('#   notes')])
+        self.assertTrue([l for l in lines if l.startswith('# Speeds: ')])
+
+    def test_std_edits_carry_their_reasons(self):
+        lines = self.header(ini(VENDOR, print_common_06(), HF04_PRINT),
+                            '-n', '0.6', '--std', '0.4')
+        start = lines.index("# Changed from Prusa's prints, in every profile (STD_EDITS):")
+        self.assertEqual(lines[start + 1:start + 5], [
+            '#   print_settings_id: unset -> (empty)', '#       system preset hygiene',
+            '#   compatible_printers: unset -> (empty)', '#       condition-based binding only'])
 
 
 if __name__ == '__main__':

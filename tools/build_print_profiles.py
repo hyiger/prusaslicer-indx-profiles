@@ -33,11 +33,12 @@ import collections
 import io
 import re
 import sys
+import textwrap
 
 from nozzles import NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, speed_for
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.4.1'
+BUNDLE_VERSION = '0.4.2'
 
 # Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
 STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}
@@ -127,13 +128,31 @@ SPEED_KEYS = [('perimeter_speed', 'perim', 'perimeter_extrusion_width'),
               ('top_solid_infill_speed', 'top', 'top_infill_extrusion_width')]
 
 
-def build_nozzle(vendor, noz, report):
+def shown(value):
+    return 'unset' if value is None else value or '(empty)'
+
+
+def why_lines(edits):
+    """Header lines for [(where, key, old, new, why)], in the printer presets'
+    `key: old -> new` / reason layout."""
+    lines = []
+    for where, key, old, new, why in edits:
+        lines.append('#   %s%s: %s -> %s' % (where and where + ': ', key, shown(old), shown(new)))
+        lines += ['#       ' + l for l in textwrap.wrap(why, 68)]
+    return lines
+
+
+def build_nozzle(vendor, noz, report, edits):
+    """`edits` collects every key changed from the resolved common, with its
+    reason: the COMMON_EDITS, then the per-tier Nozzle.extra."""
     common = collections.OrderedDict(resolve(vendor, 'print:' + noz.common))
     common.pop('renamed_from', None)  # new presets, not a rename of the common
 
-    for key, (val, _why) in COMMON_EDITS.items():
+    for key, (val, why) in COMMON_EDITS.items():
         if key == 'interlocking_beam_width':
             val = '%g' % (float(noz.dia) * 2)
+        if common.get(key) != val:
+            edits.append(('', key, common.get(key), val, why))
         common[key] = val
 
     variants = collections.OrderedDict()
@@ -144,10 +163,13 @@ def build_nozzle(vendor, noz, report):
         if noz.flow:
             for key, qk, wk in SPEED_KEYS:
                 o[key] = str(speed_for(noz.flow[qk], float(common[wk]), h))
-        for key, (val, _why) in noz.extra.get(tier_key, {}).items():
-            o[key] = val
         # Prusa writes layer heights to two decimals: 0.20mm, 0.32mm.
-        variants['%.2fmm %s @COREONEINDX %s' % (h, tier_label, noz.tag)] = o
+        name = '%.2fmm %s @COREONEINDX %s' % (h, tier_label, noz.tag)
+        for key, (val, why) in noz.extra.get(tier_key, {}).items():
+            if common.get(key) != val:
+                edits.append((name, key, common.get(key), val, why))
+            o[key] = val
+        variants[name] = o
 
     always = set.intersection(*(set(d) for d in variants.values()))
     for k in always:
@@ -161,8 +183,9 @@ def build_nozzle(vendor, noz, report):
     return common, variants
 
 
-def build_std(vendor, dia, report):
-    """Prusa's HF<dia> INDX prints, rebound to a standard nozzle of the same size."""
+def build_std(vendor, dia, report, edits):
+    """Prusa's HF<dia> INDX prints, rebound to a standard nozzle of the same size.
+    `edits` collects each STD_EDITS key that changes a value, with its reason."""
     suffix = STD_SOURCE[dia]
     sources = [k for k in vendor if k.startswith('print:') and k.endswith(' ' + suffix)]
     if not sources:
@@ -170,6 +193,7 @@ def build_std(vendor, dia, report):
 
     hf_bind, std_bind = STD_BIND[0] % dia, STD_BIND[1] % dia
     profiles = collections.OrderedDict()
+    before = collections.defaultdict(set)   # STD_EDITS key -> Prusa's values
     for key in sources:
         r = collections.OrderedDict(resolve(vendor, key))
         cond = r.get('compatible_printers_condition', '')
@@ -178,10 +202,16 @@ def build_std(vendor, dia, report):
                              'needs a human decision' % (key, cond, hf_bind))
         r['compatible_printers_condition'] = cond.replace(hf_bind, std_bind)
         for k, (val, _why) in STD_EDITS.items():
+            before[k].add(r.get(k))
             r[k] = val
         r.pop('renamed_from', None)
         name = key[len('print:'):-len(suffix)] + '@COREONEINDX ' + dia
         profiles[name] = r
+
+    for k, (val, why) in STD_EDITS.items():
+        if before[k] != {val}:
+            old = next(iter(before[k])) if len(before[k]) == 1 else 'varies by profile'
+            edits.append(('', k, old, val, why))
 
     first = next(iter(profiles.values()))
     common = collections.OrderedDict(
@@ -262,10 +292,20 @@ def main():
     report = []
     for dia in sorted(set(wanted), key=float):
         noz = NOZZLES[dia]
-        common, variants = build_nozzle(vendor, noz, report)
+        edits = []
+        common, variants = build_nozzle(vendor, noz, report, edits)
         w('\n# ---- %s mm : resolved copy of Prusa %s\n' % (dia, noz.common))
         if not noz.validated:
             w('# UNVALIDATED: %s\n' % noz.note)
+        if edits:
+            w('#\n# Changed from Prusa\'s common (COMMON_EDITS, then per tier Nozzle.extra):\n')
+            w(''.join(l + '\n' for l in why_lines(edits)))
+        if noz.flow:
+            targets = ', '.join('%s %g' % (key[:-len('_speed')].replace('_', ' '), noz.flow[qk])
+                                for key, qk, _ in SPEED_KEYS)
+            w(''.join('# %s\n' % l for l in textwrap.wrap(
+                'Speeds: the six main speeds of each tier are solved from the nozzles.py '
+                'flow targets, in mm3/s: %s.' % targets, 74)))
         w('\n[print:%s]\n' % noz.hidden_common)
         for k in sorted(common):
             w('%s = %s\n' % (k, common[k]))
@@ -277,13 +317,17 @@ def main():
 
     std_report = []
     for dia in sorted(set(args.stds), key=float):
-        common, variants = build_std(vendor, dia, std_report)
+        edits = []
+        common, variants = build_std(vendor, dia, std_report, edits)
         hidden = '*COREONEINDX %s*' % dia
         w('\n# ---- %s mm standard nozzle : Prusa\'s "%s" prints, binding\n'
           '#      changed from nozzle_high_flow[0] to ! nozzle_high_flow[0]\n'
           % (dia, STD_SOURCE[dia]))
         if not STD_VALIDATED.get(dia, False):
             w('# UNVALIDATED: not yet test printed on a standard %s mm INDX nozzle.\n' % dia)
+        if edits:
+            w('#\n# Changed from Prusa\'s prints, in every profile (STD_EDITS):\n')
+            w(''.join(l + '\n' for l in why_lines(edits)))
         w('\n[print:%s]\n' % hidden)
         for k in sorted(common):
             w('%s = %s\n' % (k, common[k]))
