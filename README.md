@@ -49,6 +49,9 @@ tools/
   derive_filaments.py             generates high-flow filament presets
   derive_std_filaments.py         generates standard-nozzle filament presets
   build_printer_preset.py         generates printer presets
+tests/
+  test_generators.py              synthetic-INI tests of the generators'
+                                  refusals (python3 -m unittest discover -s tests)
 ```
 
 One vendor bundle holds every nozzle size. The filename becomes the vendor ID,
@@ -590,6 +593,15 @@ the swapped-in chain:
   at 0.25 that is `retract_length = 0.7` and `travel_max_lift = 1.5`, so ASA's
   travel lift rises from 0.6. Each affected preset names the released keys in its
   `filament_notes`.
+
+**Toolchanger keys, both sizes.** The INDX STD and 0.25 bases come in whole, and
+with them the INDX toolchanger common they stand on: at 2.5.12 that is
+`*C1INDX_common*` for every one. The high-flow bundle's gate applies here too.
+Each preset must reach that common through exactly one swapped-in base and by
+no other route, so a new high-flow family with no standard base stops the build
+rather than reaching a standard nozzle. A per-nozzle common Prusa later puts
+under a standard base may change only keys reviewed into `COMMON_ADOPT`, and
+the bundle header and `filament_notes` record them.
 
 ### Prusa's commented-out drafts
 
