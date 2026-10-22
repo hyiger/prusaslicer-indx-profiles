@@ -9,9 +9,9 @@ whoever edits the code. Keep the README short: derivation detail belongs in
 ## What this is
 
 PrusaSlicer profiles for Prusa CORE One INDX toolheads at nozzle sizes Prusa
-ships no INDX printer for (its only variant is `HF0.4`): high-flow HF0.6 and
-HF1.0, and standard, non-high-flow 0.4 and 0.25. HF0.6, HF1.0 and standard 0.4
-print profiles install as read-only **system presets** via a vendor bundle.
+ships no INDX printer for (its only variant is `HF0.4`): high-flow HF0.6, HF0.8
+and HF1.0, and standard, non-high-flow 0.4 and 0.25. HF0.6, HF0.8, HF1.0 and
+standard 0.4 print profiles install as read-only **system presets** via a vendor bundle.
 HF1.0 is the one size Prusa publishes nothing for; it is 0.8 scaled up, under
 the exception to non-negotiable 1. At 0.25 the print
 profiles are Prusa's own `@COREONEINDX 0.25`, so only the printer and filaments
@@ -94,7 +94,7 @@ that.
 ## Layout
 
 ```
-vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, HF1.0, standard 0.4 (0.25 uses Prusa's)
+vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, HF0.8, HF1.0, standard 0.4 (0.25 uses Prusa's)
 vendor/hyigerINDX.idx      handwritten  version index
 filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
 printer/*.ini              GENERATED  flattened printer presets
@@ -127,10 +127,11 @@ purpose.
 PR=~/Library/Application\ Support/PrusaSlicer/vendor/PrusaResearch.ini
 
 python3 tools/build_print_profiles.py "$PR" /dev/null --list
-python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 -n 1.0 --std 0.4
-python3 tools/build_printer_preset.py "$PR" printer -n 0.6 -n 1.0
+python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4
+python3 tools/build_printer_preset.py "$PR" printer -n 0.6 -n 0.8 -n 1.0
 python3 tools/build_printer_preset.py "$PR" printer -n 0.4 -n 0.25 --std
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.6-filaments.ini -n 0.6
+python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.8-filaments.ini -n 0.8
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-1.0-filaments.ini -n 1.0
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.4-filaments.ini -n 0.4
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.25-filaments.ini -n 0.25
@@ -194,7 +195,7 @@ assert still passes. An added or dropped profile surfaces as
 Compare **resolved** profiles, not raw text. Which keys sit in the hidden common
 versus the tier overrides is an implementation detail that shifts legitimately.
 
-## PrusaSlicer behaviours that dictate the design
+## PrusaSlicer behaviors that dictate the design
 
 Verified against the `version_2.9.6` tag. Re-check before assuming any still
 holds.
@@ -498,8 +499,8 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
    `BIND`/`BASE_SWAP` and `STD_VALIDATED` instead.
 2. Supply `flow` targets only with a defensible basis, and set
    `validated=False` until printed.
-3. Rebuild the vendor bundle with every size it carries (`-n 0.6 -n 1.0 -n <dia>
-   --std 0.4`, i.e. every size in the recipe above plus the new one: one bundle
+3. Rebuild the vendor bundle with every size it carries (`-n 0.6 -n 0.8 -n 1.0
+   -n <dia> --std 0.4`, i.e. every size in the recipe above plus the new one: one bundle
    holds all sizes, so `-n <dia>` alone drops the rest), then
    the printer preset (`build_printer_preset.py "$PR" printer -n <dia>`) and the
    filament bundle (`derive_filaments.py ... -n <dia>`). Commit all three.
@@ -625,9 +626,9 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
   `0.40mm Extra Coarse ★`) and the dock-fan fix. The *flow targets* in
   `nozzles.py` are still extrapolated (`validated=False`), so
   `build_print_profiles.py --list` and the printer tool's own banner and header
-  both say UNVALIDATED, and nothing at 0.8 has been printed. The committed
-  bundle has no 0.8 prints: build the vendor bundle with `-n 0.8` too, or that
-  default dangles.
+  both say UNVALIDATED, and nothing at 0.8 has been printed. HF0.8 is committed
+  since bundle 0.6.0 (print profiles, printer preset and filament bundle), so
+  the recipe builds it.
 - **`min_bead_width = 90%` on the HF0.6 Draft tier** where every `@COREONE
   HF0.6` profile says 85%. It is a deliberate transfer of Prusa's own Draft-tier
   choice (`0.25mm Draft @COREONEINDX HF0.4`), with the reason recorded in
