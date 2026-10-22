@@ -60,7 +60,12 @@ already supplies (Generic FLEX 3.5 = Generic FLEX @COREONE 0.6, Prusament PLA
 28 / 2) for the CORE One one, which is what the first rule exists to prevent.
 The fourth divergence, Prusament PLA slowdown_below_layer_time 15 against 9, is
 not an MVS, and restates both parents: Prusa's own *PLA06HFC1INDX* types 15
-too. See README "Known gaps".
+too. See docs/PROVENANCE.md, "Gaps in detail".
+
+At HF1.0, which Prusa publishes nothing for (nozzles.py, SCALED SIZES), every
+value - MVS and pressure advance included - is derived at 0.8 as above and only
+renamed and rebound to a 1.0 nozzle. Nothing is scaled. The tool refuses if the
+PrusaResearch.ini it reads has any 1.0 source after all.
 
 These are Prusa nozzle ratios applied to a Bondtech CHT. Treat every number as a
 starting point and calibrate MVS before trusting it.
@@ -72,7 +77,8 @@ import collections
 import re
 import sys
 
-from build_print_profiles import load, load_drafts, printer_models, resolve
+from build_print_profiles import (assert_unsourced, load, load_drafts, printer_models,
+                                  resolve)
 from nozzles import NOZZLES
 
 INDX_SUFFIX = ' @COREONEINDX HF0.4'
@@ -87,6 +93,7 @@ FAMILY_SIZED = [(re.compile(r'^\*([A-Z]+)HFC1INDX\*$'), '*%sHFC1INDX*'),
                 (re.compile(r'^\*([A-Z]+)04PGC1INDX\*$'), '*%sPGC1INDX*')]
 # Keys a per-nozzle common may change, each reviewed with its reason. A per-nozzle
 # common that changes any other key refuses: review it and add it here first.
+# derive_std_filaments.py gates the commons under its STD bases on this list too.
 COMMON_ADOPT = {
     'filament_minimal_purge_on_wipe_tower':
         'Prusa sets the INDX wipe-tower minimal purge per nozzle (2.5.12: 14 at 0.6, '
@@ -107,6 +114,8 @@ TRANSFER = ['slowdown_below_layer_time', 'fan_below_layer_time', 'min_print_spee
 # the diameter without its dot, exactly as Prusa writes it: 0.6 -> 06.
 PA_SIZED = re.compile(r'^\*C1INDX_([A-Z]+)_(\d+)_PA\*$')
 PA_FLAT = re.compile(r'^\*C1INDX_([A-Z]+)_PA\*$')     # nozzle independent, e.g. FLEX
+# A name match is necessary, not sufficient: the polyamide chamber section
+# *C1INDX_CH_PA* matches PA_FLAT, so pa_source() also requires an M572.
 # Keys from Prusa's commented HF<dia> drafts to show against the derived values.
 DRAFT_WATCH = ['filament_max_volumetric_speed', 'slowdown_below_layer_time']
 
@@ -220,11 +229,20 @@ def parents(S, name, out=None):
 
 
 def pa_source(S, mat):
-    """The INDX PA section this material inherits at 0.4, or None."""
-    for p in parents(S, 'filament:' + mat + INDX_SUFFIX):
-        if PA_SIZED.match(p) or PA_FLAT.match(p):
-            return p
-    return None
+    """The INDX PA section this material inherits at 0.4, or None.
+
+    A PA section is named like one and types an M572 in its own body. The name
+    alone is not enough: PA_FLAT also matches the polyamide chamber section
+    *C1INDX_CH_PA*, which would pass a polyamide base off as nozzle independent.
+    Refuses on more than one, rather than letting chain order pick."""
+    name = 'filament:' + mat + INDX_SUFFIX
+    found = sorted({p for p in parents(S, name)
+                    if (PA_SIZED.match(p) or PA_FLAT.match(p))
+                    and m572(S.get('filament:' + p, {}).get('start_filament_gcode')) is not None})
+    if len(found) > 1:
+        sys.exit('refusing: %s inherits more than one INDX PA section (%s)'
+                 % (mat + INDX_SUFFIX, ', '.join(found)))
+    return found[0] if found else None
 
 
 def m572(gcode):
@@ -263,6 +281,29 @@ def set_pa(gcode, pa):
     return re.sub(r'M572 S[\d.]+', 'M572 S' + pa, gcode)
 
 
+def foreign_at(S, dia):
+    """Prusa's own INDX filaments whose binding also admits a <dia> high-flow INDX
+    printer - e.g. *PETHFC1INDX* binds by excluding 0.5/0.6/0.8, which says
+    nothing about 1.0. Only reported: Prusa's bindings cannot be changed here."""
+    from derive_std_filaments import evaluate   # its =~ / regex_match semantics
+    name = 'printer:Prusa CORE One INDX 8T HF0.4 nozzle'
+    base = resolve(S, name) if name in S else {'printer_model': 'COREONE_INDX8T'}
+    printer = dict(base, nozzle_diameter=dia, nozzle_high_flow='1')
+    hits = []
+    for k in S:
+        if not k.startswith('filament:') or k.startswith('filament:*'):
+            continue
+        cond = resolve(S, k).get('compatible_printers_condition', '')
+        if 'INDX' not in cond:
+            continue
+        try:
+            if evaluate(cond, printer):
+                hits.append(k[len('filament:'):])
+        except SystemExit:   # a warning must never abort the build
+            hits.append('%s (binding not evaluated: %s)' % (k[len('filament:'):], cond[:60]))
+    return sorted(hits)
+
+
 def ref_pair(S, mat, dia):
     """(lo, hi, label) CORE One profiles bracketing the 0.4 -> dia step."""
     for lo, hi, label in [(' @COREONE HF0.4', ' @COREONE HF%s' % dia, 'HF0.4->HF%s' % dia),
@@ -290,15 +331,25 @@ def main():
     if not mats:
         sys.exit('no @COREONEINDX HF0.4 filament profiles found in ' + args.vendor)
 
+    # A size Prusa publishes nothing for (nozzles.py, SCALED SIZES) is derived at
+    # its source size and only emitted as itself: every value is the source
+    # size's, held, and only the names, the binding and the notes say `dia`.
+    noz = NOZZLES.get(dia)
+    src = noz.scaled_from if noz and noz.scaled_from else dia
+    if src != dia:
+        assert_unsourced(S, drafts, dia)
+    stray = foreign_at(S, dia) if src != dia else []   # reported at the end
+
     # Refuse rather than guess if Prusa published no reference for this size.
-    covered = [m for m in mats if ref_pair(S, m, dia)[0] is not None]
+    covered = [m for m in mats if ref_pair(S, m, src)[0] is not None]
     if not covered:
         sys.exit('no CORE One reference profiles at %s mm - cannot derive MVS.\n'
                  'Prusa publishes standard filament variants at 0.6 and 0.8 and high-flow\n'
                  'ones at HF0.5, HF0.6 and HF0.8; at %s mm there is nothing in either\n'
-                 'family to scale against. Measure MVS directly instead.' % (dia, dia))
+                 'family to scale against.%s Measure MVS directly instead.'
+                 % (src, src, '\n%s mm is derived at %s mm (nozzles.py, SCALED SIZES).'
+                    % (dia, src) if src != dia else ''))
 
-    noz = NOZZLES.get(dia)
     validated = bool(noz and noz.validated)
     out = ['# INDX %s mm filament presets, by hyiger.' % dia,
            '# Generated by tools/derive_filaments.py from PrusaResearch.ini %s.' % version,
@@ -308,6 +359,13 @@ def main():
         out.append('# UNVALIDATED: %s mm has not been test printed. Max volumetric speed is'
                    % dia)
         out.append('#              ratio-scaled off Prusa 0.4 values, not measured here.')
+    if src != dia:
+        out.append('# HELD AT HF%s: Prusa publishes nothing at %s mm. Each preset is the HF%s'
+                   % (src, dia, src))
+        out.append('#              derivation unchanged - max volumetric speed, pressure')
+        out.append('#              advance and every other value are %s\'s - only renamed'
+                   % src)
+        out.append('#              and rebound to a %s nozzle.' % dia)
     header_end = len(out)  # the per-nozzle common's block goes here, once counted
     out.append('')
     report, pa_report, draft_report = [], [], []
@@ -315,7 +373,7 @@ def main():
 
     for mat in mats:
         base = resolve(S, 'filament:' + mat + INDX_SUFFIX)
-        lo, hi, label = ref_pair(S, mat, dia)
+        lo, hi, label = ref_pair(S, mat, src)
         if lo is None:
             report.append((mat, base.get('filament_max_volumetric_speed', '?'),
                            '-', 'NO REFERENCE - skipped', ''))
@@ -347,7 +405,7 @@ def main():
 
         # Pressure advance is Prusa's own figure for this nozzle, never a scaled one.
         pa0 = m572(base.get('start_filament_gcode', ''))
-        pa1, pa_why = pressure_advance(S, drafts, mat, dia)
+        pa1, pa_why = pressure_advance(S, drafts, mat, src)
         if pa1 is not None and pa1 != pa0:
             new['start_filament_gcode'] = set_pa(base['start_filament_gcode'], pa1)
             pa_note = 'PA %s -> %s from %s' % (pa0, pa1, pa_why)
@@ -361,7 +419,7 @@ def main():
         # re-resolve the base with its 0.4 family swapped for the sized one. The
         # 0.4 family and anything inherited before it give way; a value the 0.4
         # preset sets in its own body survives, as an own override always does.
-        fam04, fam = family_at(S, mat, dia)
+        fam04, fam = family_at(S, mat, src)
         common_sec = sized_common(S, fam)
         if common_sec not in commons:
             commons[common_sec] = (common_delta(S, common_sec), collections.OrderedDict(), [])
@@ -383,7 +441,7 @@ def main():
         common_note = ' %s: %s.' % (common_sec, '; '.join(common_notes)) if common_notes else ''
 
         # Show what Prusa's commented draft for this size says, adopted or not.
-        draft = drafts.get('filament:%s @COREONEINDX HF%s' % (mat, dia), {})
+        draft = drafts.get('filament:%s @COREONEINDX HF%s' % (mat, src), {})
         for k in DRAFT_WATCH:
             if k in draft and draft[k] != new.get(k):
                 draft_report.append((mat, k, draft[k], new.get(k, '-')))
@@ -396,11 +454,14 @@ def main():
         # Keep Prusa's own notes: the INDX start G-code reads markers such as
         # MBL160 (Prusament TPU 95A) out of filament_notes to pick the probe temp.
         notes = base.get('filament_notes', '""').strip('"')
-        new['filament_notes'] = '"%s%s"' % (
-            notes + '\\n' if notes else '',
+        held = ('INDX %s seed, held at HF%s: Prusa publishes nothing at %s mm, so every '
+                'value is the HF%s derivation below, unchanged. ' % (dia, src, dia, src)
+                if src != dia else '')
+        new['filament_notes'] = '"%s%s%s"' % (
+            notes + '\\n' if notes else '', held,
             'INDX %s seed. Base: %s. MVS %g -> %g via CORE One %s (x%.2f). %s.%s '
             'Prusa nozzle ratio applied to a Bondtech CHT - re-measure MVS and PA.'
-            % (dia, mat + INDX_SUFFIX, mvs0, mvs1, label, ratio, pa_note, common_note))
+            % (src, mat + INDX_SUFFIX, mvs0, mvs1, label, ratio, pa_note, common_note))
 
         out.append('[filament:%s @COREONEINDX HF%s]' % (mat, dia))
         for k in sorted(new):
@@ -413,7 +474,7 @@ def main():
         if not delta:
             continue
         block += ['#', '# From Prusa\'s per-nozzle INDX common %s, which its %s family sections'
-                  % (common_sec, dia), '# stand on in place of %s (COMMON_ADOPT):' % COMMON]
+                  % (common_sec, src), '# stand on in place of %s (COMMON_ADOPT):' % COMMON]
         for k, (moved, kept) in creport.items():
             v0, v1 = delta[k]
             block.append('#   %s: %s -> %s, on %d of %d presets%s'
@@ -426,6 +487,9 @@ def main():
         f.write('\n'.join(out))
 
     w = max(len(r[0]) for r in report)
+    if src != dia:
+        print('%s mm: Prusa publishes nothing here, so every value below is the HF%s '
+              'derivation, held.\n' % (dia, src))
     print('%-*s %7s %7s  %-20s %s' % (w, 'material', 'MVS 0.4', 'MVS ' + dia,
                                       'reference', 'other transfers'))
     print('-' * (w + 92))
@@ -451,11 +515,21 @@ def main():
 
     if draft_report:
         print('\nPrusa\'s commented "@COREONEINDX HF%s" drafts disagree here, and are not '
-              'adopted\n(see README "Known gaps"):' % dia)
+              'adopted\n(see docs/PROVENANCE.md, "Gaps in detail"):' % src)
         print('%-*s %-34s %8s %8s' % (w, 'material', 'key', 'draft', 'derived'))
         print('-' * (w + 54))
         for m, k, d, v in draft_report:
             print('%-*s %-34s %8s %8s' % (w, m, k, d, v))
+
+    if src != dia:
+        if stray:
+            print('\n!! %d of Prusa\'s own INDX filaments also bind to a %s INDX printer, because'
+                  % (len(stray), dia))
+            print('   Prusa excludes sizes by listing them and %s is not listed. They carry 0.4'
+                  % dia)
+            print('   MVS and pressure advance; pick the @COREONEINDX HF%s presets instead:' % dia)
+            for name in stray:
+                print('     ' + name)
 
     print('\n%d presets -> %s' % (len([r for r in report if r[2] != '-']), args.out))
     if not validated:
