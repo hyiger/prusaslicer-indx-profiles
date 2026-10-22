@@ -220,24 +220,50 @@ def std_base(S, name, dia):
     return bases[0]
 
 
-def after_base(S, name, base):
-    """Refuse if preset `name` lists, after the parent that brings in its INDX STD
-    base, a parent whose chain sets an INDX toolchanger key (a *C1INDX_common* or
-    COMMON_ADOPT key). In PrusaSlicer's chain a later parent overrides an earlier
-    one, so that value would replace the common's. It reaches no common, so
-    bypasses() lets it through, and it sits outside the base's own chain, so
-    sized_common() never sees it: it would be emitted and credited as the
-    preset's own override."""
-    parents = inherits(S, 'filament:' + name)
-    via = [i for i, p in enumerate(parents)
-           if p == base or base in ancestors(S, 'filament:' + p)]
+def after_base(S, name, base, generated=()):
+    """Refuse if anything that overrides the INDX STD base of preset `name` sets
+    an INDX toolchanger key (a *C1INDX_common* or COMMON_ADOPT key).
+
+    In PrusaSlicer's chain a later parent overrides an earlier one, and a
+    section's own body overrides all its parents. So on every level of the path
+    from the preset down to its base, a parent listed after the step toward the
+    base would replace the common's value, as would the own body of each wrapper
+    section the path passes through. None of these reaches the common, so
+    bypasses() lets them through, and they sit outside the base's own chain, so
+    sized_common() never sees them: the value would be emitted and credited as
+    the preset's own override. The preset's own body is exempt - that is its own
+    override by design - and so is the body of a preset this tool generated
+    earlier in the run (`generated`), whose body is likewise an INDX HF0.4
+    preset's own overrides, in Prusa's own chain."""
     toolchanger = set(resolve(S, 'filament:' + COMMON)) | set(COMMON_ADOPT)
-    for p in parents[via[-1] + 1:]:
-        hit = sorted(set(resolve(S, 'filament:' + p)) & toolchanger)
-        if hit:
-            raise SystemExit('refusing: %s inherits %s after its INDX STD base %s, and %s '
-                             'sets INDX toolchanger key(s) %s, which would override the '
-                             'common; review it first' % (name, p, base, p, ', '.join(hit)))
+
+    def walk(sec):
+        parents = inherits(S, 'filament:' + sec)
+        via = [i for i, p in enumerate(parents)
+               if p == base or base in ancestors(S, 'filament:' + p)]
+        if not via:
+            return
+        within = '' if sec == name else ' (within %s)' % sec
+        for p in parents[via[-1] + 1:]:
+            hit = sorted(set(resolve(S, 'filament:' + p)) & toolchanger)
+            if hit:
+                raise SystemExit('refusing: %s inherits %s after its INDX STD base %s%s, and %s '
+                                 'sets INDX toolchanger key(s) %s, which would override the '
+                                 'common; review it first'
+                                 % (name, p, base, within, p, ', '.join(hit)))
+        step = parents[via[-1]]
+        if step == base:
+            return
+        if step not in generated:
+            hit = sorted({k for k in S['filament:' + step] if k != 'inherits'} & toolchanger)
+            if hit:
+                raise SystemExit('refusing: %s reaches its INDX STD base %s through %s, whose '
+                                 'own body sets INDX toolchanger key(s) %s, which would '
+                                 'override the common; review it first'
+                                 % (name, base, step, ', '.join(hit)))
+        walk(step)
+
+    walk(name)
 
 
 def derive(S, drafts, dia, skipped, commons):
@@ -288,7 +314,7 @@ def derive(S, drafts, dia, skipped, commons):
 
         S['filament:' + name] = collections.OrderedDict(own, inherits='; '.join(parents))
         base = std_base(S, name, dia)
-        after_base(S, name, base)
+        after_base(S, name, base, built)
         common_sec = sized_common(S, base)
         if common_sec not in commons:
             commons[common_sec] = (common_delta(S, common_sec), collections.OrderedDict(), [])

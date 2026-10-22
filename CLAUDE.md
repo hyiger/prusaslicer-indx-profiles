@@ -442,10 +442,15 @@ gate, through the same `sized_common()` / `common_delta()` and the same
 `COMMON_ADOPT`. Each preset must reach `*C1INDX_common*` through exactly one
 `BASE_SWAP` target and by no other route (`std_base()`); that refuses a new HF
 family `BASE_SWAP` has no STD base for, which would otherwise be kept, high-flow
-values and all. No parent the preset lists after that base may set a
-toolchanger key either (`after_base()`): the last parent wins in PrusaSlicer's
-chain, so it would override the common while reaching no common and sitting
-outside the base's chain, and be credited as the preset's own value. The common under that base is found by structure, and the same
+values and all. Nothing that overrides that base may set a toolchanger key
+either (`after_base()`): on every level of the path from the preset down to
+the base, neither a parent listed after the step toward the base nor the own
+body of a wrapper section the path passes through. The last parent wins in
+PrusaSlicer's chain and a body beats its parents, so such a value would replace
+the common's while reaching no common and sitting outside the base's chain,
+and be credited as the preset's own. The preset's own body is exempt, as is
+the body of a preset generated earlier in the run (Fiberlogy BVOH on Verbatim
+BVOH), which holds an INDX HF0.4 preset's own overrides in Prusa's own chain. The common under that base is found by structure, and the same
 refusals apply. An adopted key comes in with the base: it is recorded in the
 header, `filament_notes` and stdout, and a preset's own value is kept over it.
 

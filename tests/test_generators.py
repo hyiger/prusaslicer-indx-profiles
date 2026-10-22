@@ -249,6 +249,45 @@ class StdCommonGate(Tool):
         self.assertIn('temperature = 215', out)
         self.assertIn('filament_minimal_purge_on_wipe_tower = 10', out)
 
+    def test_refuses_toolchanger_key_after_the_base_inside_a_wrapper(self):
+        # The base can sit one level down. *LATER* follows it inside *WRAPPER*,
+        # so it still overrides the common, though the preset's own parent list
+        # holds only *WRAPPER*.
+        self.assertRefuses(
+            self.derive(std_pla(),
+                        '[filament:*WRAPPER*]\ninherits = *PLAPGC1INDX*; *LATER*\n',
+                        '[filament:*LATER*]\nfilament_minimal_purge_on_wipe_tower = 99\n',
+                        *std_material(hf_family='*WRAPPER*')),
+            'inherits *LATER* after its INDX STD base *PLAPGC1INDX* (within *WRAPPER*)',
+            'filament_minimal_purge_on_wipe_tower')
+
+    def test_refuses_toolchanger_key_in_a_wrapper_body(self):
+        # A wrapper's own body comes after its parents, so it overrides the
+        # common too.
+        self.assertRefuses(
+            self.derive(std_pla(),
+                        '[filament:*WRAPPER*]\ninherits = *PLAPGC1INDX*\n'
+                        'filament_minimal_purge_on_wipe_tower = 99\n',
+                        *std_material(hf_family='*WRAPPER*')),
+            'through *WRAPPER*, whose own body sets INDX toolchanger key(s) '
+            'filament_minimal_purge_on_wipe_tower')
+
+    def test_wrapper_without_toolchanger_keys_still_builds(self):
+        out = self.assertBuilds(self.derive(
+            std_pla(), '[filament:*WRAPPER*]\ninherits = *PLAPGC1INDX*; *LATER*\ntemperature = 210\n',
+            '[filament:*LATER*]\nbed_temperature = 60\n', *std_material(hf_family='*WRAPPER*')))
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 10', out)
+
+    def test_a_generated_wrapper_keeps_its_own_values(self):
+        # Like Fiberlogy BVOH on Verbatim BVOH: a preset whose parent is one this
+        # tool built earlier inherits that preset's own overrides, as Prusa's own
+        # chain does, so the wrapper-body check must not refuse it.
+        out = sections(self.assertBuilds(self.derive(
+            std_pla(), *std_material(own='filament_minimal_purge_on_wipe_tower = 15'),
+            *std_material('Generic PLA', 'Prusament PLA @COREONEINDX HF0.4'))))
+        self.assertEqual(out['filament:Generic PLA @COREONEINDX 0.4']
+                         ['filament_minimal_purge_on_wipe_tower'], '15')
+
     def test_refuses_a_family_with_no_std_base(self):
         # A new HF family BASE_SWAP has no STD base for would otherwise be kept
         # as it is, high-flow values and all, on a standard nozzle.
