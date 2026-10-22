@@ -504,7 +504,7 @@ def main():
             if a.std:
                 cfg, changed = build_std(vendor, drafts, dia, model, report)
                 name = 'Prusa CORE One INDX %s %s nozzle' % (model, dia)
-                validated = STD_VALIDATED.get(dia, False)  # sourced, not yet printed
+                validated = STD_VALIDATED.get(dia, False)  # True once test printed
                 note = ('Standard (non-high-flow) nozzle. Source: ' +
                         ('the CORE One HF0.4 -> %s pair.' % dia if dia in STD_PAIR else
                          'Prusa\'s commented-out INDX %s draft, not yet released '

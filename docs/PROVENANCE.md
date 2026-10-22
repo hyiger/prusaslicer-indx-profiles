@@ -697,14 +697,16 @@ The README lists these in short. Here is each one in full.
   that differ only through inherited values (Prusament ASA, PC Blend CF, Generic
   PETG, Generic PLA) are not reported. Pressure advance is the exception: it is
   taken from Prusa's figures, drafted or not.
-- **Only HF0.6 is validated.** The standard 0.4 and 0.25 values are all
-  Prusa's, but sourced is not printed: they carry an UNVALIDATED banner until
-  test printed on an INDX. Every generator marks an unvalidated size in the file
-  it writes as well as on stdout. 0.5 and 0.8 flow targets are extrapolated. The
-  0.8 case is weakest: Prusa's `@COREONE 0.8` MVS figures are for a standard
-  brass nozzle (Prusament PLA = 19, *below* the HF0.6 figure of 30) and don't
-  transfer to a high-flow CHT. Its *printer* preset is better founded — Prusa
-  drafted one — but still unprinted. **HF1.0** is weaker still: it rests on the
+- **HF0.6, standard 0.4 and standard 0.25 are validated**, meaning test
+  printed on an INDX; HF0.8 and HF1.0 are not. Every standard value is Prusa's,
+  but sourced is not printed, so the standard sizes carried an UNVALIDATED
+  banner until they were printed (dropped October 2026, vendor bundle 0.6.1).
+  Every generator marks an unvalidated size in the file it writes as well as on
+  stdout. 0.5 and 0.8 flow targets are extrapolated. The 0.8 case is weakest:
+  Prusa's `@COREONE 0.8` MVS figures are for a standard brass nozzle
+  (Prusament PLA = 19, *below* the HF0.6 figure of 30) and don't transfer to a
+  high-flow CHT. Its *printer* preset is better founded (Prusa
+  drafted one) but still unprinted. **HF1.0** is weaker still: it rests on the
   0.8 numbers plus a scaling rule, with no Prusa source at 1.0 at all. See
   [The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced) for what is held at 0.8 and
   what Prusa varies between sizes that is held anyway.

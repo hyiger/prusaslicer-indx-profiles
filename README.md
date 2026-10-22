@@ -19,8 +19,8 @@ Nearly every value is read out of Prusa's own `PrusaResearch.ini`, not invented;
 | **HF0.6** (Bondtech CHT) | `0.20mm Detail`, `0.25mm Balanced ★`, `0.32mm Draft` | 19 | test printed |
 | **HF0.8** (Bondtech CHT) | `0.30mm Detail`, `0.40mm Balanced ★`, `0.55mm Draft` | 19 | not test printed; print speeds extrapolated ([why](#known-gaps)) |
 | **HF1.0** (Bondtech CHT) | `0.38mm Detail`, `0.50mm Balanced ★`, `0.69mm Draft` | 19 | not test printed; scaled from 0.8 ([why](#known-gaps)) |
-| **0.4 standard** | Prusa's four HF0.4 profiles, rebound to a standard nozzle: `0.10mm Fine`, `0.15mm Detail`, `0.20mm Balanced ★`, `0.25mm Draft`, each `@COREONEINDX 0.4` | 17 | not test printed |
-| **0.25 standard** | none needed: Prusa ships `0.07mm Extra Fine`, `0.10mm Fine ★` and `0.15mm Detail`, each `@COREONEINDX 0.25` | 14 | not test printed |
+| **0.4 standard** | Prusa's four HF0.4 profiles, rebound to a standard nozzle: `0.10mm Fine`, `0.15mm Detail`, `0.20mm Balanced ★`, `0.25mm Draft`, each `@COREONEINDX 0.4` | 17 | test printed |
+| **0.25 standard** | none needed: Prusa ships `0.07mm Extra Fine`, `0.10mm Fine ★` and `0.15mm Detail`, each `@COREONEINDX 0.25` | 14 | test printed |
 
 The star marks the recommended default for each nozzle. Print speeds, in mm/s:
 
@@ -205,9 +205,9 @@ Every number is a starting point. Calibrate in this order:
 
 ## Known gaps
 
-- **Only HF0.6 has been test printed.** The HF0.8, standard 0.4 and standard
-  0.25 setups rest on Prusa's own values, but nobody has printed them on an
-  INDX yet.
+- **HF0.8 and HF1.0 have not been test printed.** HF0.6, standard 0.4 and
+  standard 0.25 have. HF0.8's print speeds are extrapolated and HF1.0 is
+  scaled from HF0.8; both are covered below.
 - **HF0.8's print speeds are extrapolated.** Prusa has done no speed pass at
   0.8, so the speeds are solved from flow targets this repo extrapolated past
   HF0.6's. Everything else at 0.8 is Prusa's: the print settings, the printer
