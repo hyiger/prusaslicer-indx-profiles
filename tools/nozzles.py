@@ -150,7 +150,9 @@ NOZZLES = {
     # ships its own "@COREONEINDX 0.25" print profiles built on it. Building
     # them here would only duplicate Prusa's, so the generator refuses.
     '0.25': Nozzle('0.25', '*INDX_025_common*', (0.07, 0.12, 0.15),
-                   flow=None, validated=False,  # Prusa's pass is sourced, not printed here
+                   # Never built here (shipped). Prusa's pass is test printed
+                   # only as part of the standard 0.25 setup: STD_VALIDATED.
+                   flow=None, validated=False,
                    note='upstream speed pass present; speeds left untouched',
                    shipped='0.07mm Extra Fine / 0.10mm Fine ★ / 0.15mm Detail @COREONEINDX 0.25'),
 
@@ -238,8 +240,10 @@ NOZZLES['1.0'] = scaled_nozzle(
 # not the same as printed: flip a size to True only once it has been test
 # printed on an INDX. Drives the UNVALIDATED banner in all three --std outputs.
 STD_VALIDATED = {
-    '0.4': False,   # Prusa's HF0.4 prints and the CORE One HF0.4 -> 0.4 delta
-    '0.25': False,  # Prusa's unreleased INDX 0.25 draft and 0.25 bases
+    '0.4': True,    # Prusa's HF0.4 prints and the CORE One HF0.4 -> 0.4 delta;
+                    # test printed on an INDX, reported 2026-10-22
+    '0.25': True,   # Prusa's unreleased INDX 0.25 draft and 0.25 bases;
+                    # test printed on an INDX, reported 2026-10-22
 }
 
 # The three profiles emitted per nozzle. The star marks the recommended
