@@ -1,7 +1,10 @@
 # CLAUDE.md
 
-Context for AI assistants working in this repo. `README.md` is for users; this
-file is for whoever edits the code.
+Context for AI assistants working in this repo. `README.md` is the user guide
+(install, verify, calibrate, known gaps); `docs/PROVENANCE.md` is where every
+value comes from and why, for readers who want the detail; this file is for
+whoever edits the code. Keep the README short: derivation detail belongs in
+`docs/PROVENANCE.md`.
 
 ## What this is
 
@@ -97,6 +100,7 @@ filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
 printer/*.ini              GENERATED  flattened printer presets
 personal/*.ini             FOREIGN    exports from the Filament DB app
 personal/README.md         handwritten  why they don't import as a bundle
+docs/PROVENANCE.md         handwritten  provenance and design deep-dive
 tools/nozzles.py           handwritten  per-nozzle config table — start here
 tools/build_print_profiles.py  GENERATOR  vendor bundle (HF sizes, --std 0.4)
 tools/build_printer_preset.py  GENERATOR  printer presets (HF sizes, --std)
@@ -141,7 +145,7 @@ before each upgrade (`<datadir>/snapshots/<timestamp>/vendor/PrusaResearch.ini`,
 `reason = upgrade`), so to reproduce the committed artifacts point `PR` at the
 snapshot whose copy reports `config_version = 2.5.12`: the one taken when 2.5.12
 was replaced, not necessarily the newest. `PrusaResearch.ini` line numbers cited
-in this file and the README are 2.5.12's; PrusaSlicer source line numbers are
+in this file and docs/PROVENANCE.md are 2.5.12's; PrusaSlicer source line numbers are
 `version_2.9.6`'s. A release does not shift INI lines uniformly — 2.5.11 →
 2.5.12 moved the printer and print drafts by 10 and the `*C1INDX_*_PA*` sections
 by anything from 32 to 125 — so re-grep the section name rather than applying an
@@ -492,7 +496,11 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
    the printer preset (`build_printer_preset.py "$PR" printer -n <dia>`) and the
    filament bundle (`derive_filaments.py ... -n <dia>`). Commit all three.
 4. Bump `BUNDLE_VERSION` in `build_print_profiles.py`, add the matching line to
-   the `.idx`, and update the README tables.
+   the `.idx`, and update every per-nozzle table and list in `README.md` (What
+   you get; under Install the `cp` list, the by-hand table and the bundle names;
+   Verify; the pressure-advance list under Calibrate; Known gaps) and in
+   `docs/PROVENANCE.md` (What the bundles contain, Setting a printer up by hand,
+   Adding a nozzle size, Pressure advance by size).
 
 ## Things that look wrong but aren't
 
