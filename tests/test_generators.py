@@ -231,6 +231,24 @@ class StdCommonGate(Tool):
             '*PLAPGC1INDX* sets INDX toolchanger key(s) filament_minimal_purge_on_wipe_tower '
             'in its own body')
 
+    def test_refuses_toolchanger_key_set_by_a_later_parent(self):
+        # A parent the preset lists after its STD base overrides the common in
+        # PrusaSlicer's chain (the last parent wins), yet it neither reaches the
+        # common nor sits in the base's own chain. Unchecked, its 99 would be
+        # emitted and credited as the preset's own override.
+        self.assertRefuses(
+            self.derive(std_pla(), '[filament:*LATER*]\nfilament_minimal_purge_on_wipe_tower = 99\n',
+                        *std_material(hf_family='*PLAHFC1INDX*; *LATER*')),
+            'Prusament PLA @COREONEINDX 0.4 inherits *LATER* after its INDX STD base '
+            '*PLAPGC1INDX*', 'filament_minimal_purge_on_wipe_tower')
+
+    def test_later_parent_without_toolchanger_keys_still_builds(self):
+        out = self.assertBuilds(self.derive(
+            std_pla(), '[filament:*LATER*]\ntemperature = 215\n',
+            *std_material(hf_family='*PLAHFC1INDX*; *LATER*')))
+        self.assertIn('temperature = 215', out)
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 10', out)
+
     def test_refuses_a_family_with_no_std_base(self):
         # A new HF family BASE_SWAP has no STD base for would otherwise be kept
         # as it is, high-flow values and all, on a standard nozzle.

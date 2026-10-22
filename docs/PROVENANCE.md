@@ -292,7 +292,9 @@ with them the INDX toolchanger common they stand on: at 2.5.12 that is
 `*C1INDX_common*` for every one. The high-flow bundle's gate applies here too.
 Each preset must reach that common through exactly one swapped-in base and by
 no other route, so a new high-flow family with no standard base stops the build
-rather than reaching a standard nozzle. A per-nozzle common Prusa later puts
+rather than reaching a standard nozzle. A parent listed after that base may not
+set a toolchanger key either: in PrusaSlicer's chain the last parent wins, so
+its value would replace the common's and be passed off as the preset's own. A per-nozzle common Prusa later puts
 under a standard base may change only keys reviewed into `COMMON_ADOPT`, and
 the bundle header and `filament_notes` record them.
 

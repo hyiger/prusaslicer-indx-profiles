@@ -220,6 +220,26 @@ def std_base(S, name, dia):
     return bases[0]
 
 
+def after_base(S, name, base):
+    """Refuse if preset `name` lists, after the parent that brings in its INDX STD
+    base, a parent whose chain sets an INDX toolchanger key (a *C1INDX_common* or
+    COMMON_ADOPT key). In PrusaSlicer's chain a later parent overrides an earlier
+    one, so that value would replace the common's. It reaches no common, so
+    bypasses() lets it through, and it sits outside the base's own chain, so
+    sized_common() never sees it: it would be emitted and credited as the
+    preset's own override."""
+    parents = inherits(S, 'filament:' + name)
+    via = [i for i, p in enumerate(parents)
+           if p == base or base in ancestors(S, 'filament:' + p)]
+    toolchanger = set(resolve(S, 'filament:' + COMMON)) | set(COMMON_ADOPT)
+    for p in parents[via[-1] + 1:]:
+        hit = sorted(set(resolve(S, 'filament:' + p)) & toolchanger)
+        if hit:
+            raise SystemExit('refusing: %s inherits %s after its INDX STD base %s, and %s '
+                             'sets INDX toolchanger key(s) %s, which would override the '
+                             'common; review it first' % (name, p, base, p, ', '.join(hit)))
+
+
 def derive(S, drafts, dia, skipped, commons):
     """Yield (name, config, provenance) for every derivable preset at this size,
     appending (material, reason) to `skipped` for each STD_SKIP entry met.
@@ -267,7 +287,9 @@ def derive(S, drafts, dia, skipped, commons):
             how = 'parents %s' % '; '.join(parents)
 
         S['filament:' + name] = collections.OrderedDict(own, inherits='; '.join(parents))
-        common_sec = sized_common(S, std_base(S, name, dia))
+        base = std_base(S, name, dia)
+        after_base(S, name, base)
+        common_sec = sized_common(S, base)
         if common_sec not in commons:
             commons[common_sec] = (common_delta(S, common_sec), collections.OrderedDict(), [])
         delta, creport, users = commons[common_sec]
