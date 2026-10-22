@@ -149,8 +149,8 @@ selected after switching to it.
 ### 3. Import the filament presets
 
 **File → Import → Import Config Bundle…** and pick the bundle for your nozzle:
-`filaments/hyigerINDX-0.6-filaments.ini`, `-1.0-`, `-0.4-` or `-0.25-`. They
-import as ordinary user presets.
+`filaments/hyigerINDX-0.6-filaments.ini`, `-0.8-`, `-1.0-`, `-0.4-` or `-0.25-`.
+They import as ordinary user presets.
 
 ## Verify
 
