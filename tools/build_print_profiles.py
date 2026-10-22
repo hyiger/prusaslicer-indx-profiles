@@ -42,7 +42,7 @@ from nozzles import (NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, SIZE_LABELS,
                      is_width, scale, speed_for)
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.5.0'
+BUNDLE_VERSION = '0.6.0'
 
 # Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
 STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}

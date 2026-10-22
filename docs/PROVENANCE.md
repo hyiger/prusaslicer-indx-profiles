@@ -43,10 +43,37 @@ upstream: there is no CORE One PVA at any size to scale from, so it is skipped.
 
 MVS in mm³/s.
 
+### Filament presets (0.8 mm)
+
+Nineteen of the twenty INDX materials, built by the same rules as 0.6 (see
+[how filaments are derived](#filament-presets--derived)). MVS is the INDX 0.4
+value scaled by Prusa's CORE One 0.4 to 0.8 ratio for that material: the
+high-flow `HF0.4` → `HF0.8` pair for 8 materials, the standard `@COREONE` →
+`@COREONE 0.8` pair for the other 11. Pressure advance is Prusa's own
+`*C1INDX_<FAM>_08_PA*` figure, except FLEX and TPU, which keep the
+nozzle-independent `*C1INDX_FLEX_PA*`. Wipe-tower purge (20) and the
+toolchange deretract (0.05) come from `*C1INDX_08_common*`; FLEX and TPU keep
+their own purge of 15. Generic PVA is skipped, as at 0.6.
+
+| Material | MVS 0.4 → 0.8 | PA | Material | MVS 0.4 → 0.8 | PA |
+|---|---|---|---|---|---|
+| Fiberlogy BVOH | 4 → **8** | 0.01 | Prusament PETG Carbon Fiber | 12 → **22** | 0.02 |
+| Generic ABS | 25 → **36** | 0.01 | Prusament PETG V0 | 16 → **27** | 0.02 |
+| Generic FLEX | 2 → **6** | 0 | Prusament PLA | 28 → **42** | 0.013 |
+| Generic PETG | 17 → **28** | 0.02 | Prusament PLA Blend | 12.5 → **20** | 0.013 |
+| Generic PLA | 17 → **28** | 0.013 | Prusament PVB | 6 → **19** | 0.013 |
+| Generic PLA Silk | 12.5 → **21** | 0.013 | Prusament TPU 95A | 2 → **6** | 0 |
+| Prusament ASA | 30 → **42** | 0.01 | Prusament Woodfill | 10 → **15** | 0.013 |
+| Prusament PC Blend | 22 → **36** | 0.016 | Prusament rPLA | 10 → **14** | 0.013 |
+| Prusament PC Blend Carbon Fiber | 13 → **26** | 0.016 | Verbatim BVOH | 4 → **8** | 0.01 |
+| Prusament PETG | 20 → **31** | 0.02 | | | |
+
+MVS in mm³/s.
+
 ### Filament presets (1.0 mm)
 
-The filaments are exactly the HF0.8 presets, rebound to a 1.0 nozzle, so max
-volumetric speed (MVS, mm³/s) and pressure advance (PA) are 0.8's:
+The filaments are exactly the HF0.8 presets above, rebound to a 1.0 nozzle, so
+max volumetric speed (MVS, mm³/s) and pressure advance (PA) are 0.8's:
 
 | Material | MVS | PA | Material | MVS | PA |
 |---|---|---|---|---|---|
@@ -425,11 +452,12 @@ has no draft for.
 
 ### Other sizes and the 4T
 
-Only the 8T is committed. Generate others with:
+Only the 8T is committed, at HF0.6, HF0.8, HF1.0, 0.4 and 0.25. Generate
+others with, for example:
 
 ```bash
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.5 -m 4T
-python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.8
+python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.6 -n 0.8 -n 1.0 -m 4T
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.4 -n 0.25 --std -m 4T
 ```
 
@@ -437,7 +465,7 @@ Each one names every key it changed and where the value came from, and says
 loudly if the size has never been test printed. `default_print_profile` is built
 from the same layer ladder `build_print_profiles.py` emits from, so it names a
 profile that is in the bundle once `build_print_profiles.py` has been run with
-the same `-n` (the committed bundle holds only HF0.6, HF1.0 and standard 0.4; see
+the same `-n` (the committed bundle holds only HF0.6, HF0.8, HF1.0 and standard 0.4; see
 [Adding a nozzle size](#adding-a-nozzle-size)). At 0.5 that is
 `0.20mm Balanced ★ @COREONEINDX HF0.5`, not the `0.25mm` of the 0.6 lineup.
 
@@ -475,7 +503,7 @@ answers them itself: its commented `[printer:Prusa CORE One INDX 8T HF0.8
 nozzle]` draft sets all five for an INDX toolchanger — `retract_length 0.6`,
 `retract_speed 25`, `deretract_speed 15`, `retract_lift 0.25`,
 `retract_before_wipe 50%` — so the generator builds 0.8 from the draft and marks
-it unvalidated. By hand, use the other four (`retract_lift` is greyed out while
+it unvalidated. By hand, use the other four (`retract_lift` is grayed out while
 **Use ramping lift** is on, as it is on every INDX tool, so leave it) along with
 nozzle diameter `0.8`,
 max layer height `0.6`, min `0.2` and `wipe` on.
@@ -486,7 +514,7 @@ and `wipe` stay at 0.8's.
 
 For a standard nozzle, uncheck **High flow nozzle** on every tool. For 0.25,
 also set nozzle diameter `0.25`, retraction length `0.7` (leave lift height:
-ramping lift greys it out),
+ramping lift grays it out),
 and layer heights `0.05` to `0.15`: the values in Prusa's own unreleased INDX
 0.25 printer.
 
@@ -506,7 +534,7 @@ python3 tools/build_print_profiles.py <PrusaResearch.ini> /dev/null --list
 | 0.3 | `*INDX_03_common*` | 0.12 / 0.16 / 0.20 | shipped by Prusa, not built; no such INDX nozzle |
 | 0.5 | `*INDX_05hf_common*` | 0.15 / 0.20 / 0.25 | **unvalidated** targets |
 | 0.6 | `*INDX_06hf_common*` | 0.20 / 0.25 / 0.32 | validated, in use |
-| 0.8 | `*INDX_08hf_common*` | 0.30 / 0.40 / 0.55 | **unvalidated** targets |
+| 0.8 | `*INDX_08hf_common*` | 0.30 / 0.40 / 0.55 | built (bundle 0.6.0); **unvalidated** targets |
 | 1.0 | `*INDX_08hf_common*`, scaled ×1.25 | 0.38 / 0.50 / 0.69 | **scaled from 0.8**, unvalidated; [no Prusa source](#the-10-mm-nozzle-is-scaled-not-sourced) |
 
 Prusa renamed the high-flow commons (`*INDX_06_common*` became
@@ -515,9 +543,9 @@ Prusa renamed the high-flow commons (`*INDX_06_common*` became
 To build more than one size into the bundle:
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4
-python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.8
-python3 tools/derive_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.8-filaments.ini -n 0.8
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.5 -n 0.6 -n 0.8 -n 1.0 --std 0.4
+python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.5
+python3 tools/derive_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.5-filaments.ini -n 0.5
 ```
 
 Layer-height ladders are Prusa's own CORE One ladders for the same nozzle, read
@@ -662,7 +690,10 @@ The README lists these in short. Here is each one in full.
   TPU 4), and taking it would swap the INDX flow baseline (2 / 28 / 2) for the
   CORE One one — and HF0.6 is test printed at 35. These are Prusa's own numbers,
   though, so `derive_filaments.py` prints every divergence the drafts type on a
-  watched key (MVS, `slowdown_below_layer_time`) instead of hiding it. Drafts
+  watched key (MVS, `slowdown_below_layer_time`) instead of hiding it. The same
+  holds at HF0.8, where Prusa's drafts type a higher MVS for Generic FLEX (7.5
+  against 6) and Prusament TPU 95A (8 against 6); both restate their CORE One
+  0.8 parent exactly, against an INDX 0.4 baseline of 2. Drafts
   that differ only through inherited values (Prusament ASA, PC Blend CF, Generic
   PETG, Generic PLA) are not reported. Pressure advance is the exception: it is
   taken from Prusa's figures, drafted or not.
@@ -742,7 +773,9 @@ standard and high-flow 0.4 bases share one PA base (`*C1INDX_PET_04_PA*` 0.048,
 preset's own figure is kept. Only the PLA family has no INDX standard figure at
 all. On a 0.25 it is Prusa's 0.25 value (PLA 0.1, PETG 0.15, PC 0.14,
 ABS/ASA/BVOH 0.09), about two to four and a half times the 0.4 figure, so widen a PA test's range
-to about 0.2. At HF1.0 it is Prusa's 0.8 figure (`*C1INDX_<FAM>_08_PA*`), held,
+to about 0.2. At HF0.8 it is Prusa's own 0.8 figure (`*C1INDX_<FAM>_08_PA*`),
+lower again than 0.6's (PLA 0.013, PET 0.02, ABS 0.01, PC 0.016). At HF1.0 it
+is that same 0.8 figure, held,
 because Prusa publishes none at 1.0; given Prusa's falling trend, expect your
 measured value to land below it. See
 [The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced).

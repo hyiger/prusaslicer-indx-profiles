@@ -26,7 +26,7 @@ tolerance (`PresetBundle.cpp:1609`, throwing at `Config.cpp:531` and rethrown at
 `ConfigBase::load` iterates only the *top level* of the tree
 (`Config.cpp:741-751` at `version_2.9.6`). `read_ini` nests every key one level
 down under the `[filament:…]` section, so the loop sees a single node named
-`filament:<Name>`, fails to recognise it, ignores it, and applies **no keys at
+`filament:<Name>`, fails to recognize it, ignores it, and applies **no keys at
 all**. `load_presets` then lays that empty config over PrusaSlicer's defaults, so
 you get a preset named after the file with every value at the compiled-in
 default — nozzle 200 °C, bed 0 °C — and nothing is logged. It is the same trap
