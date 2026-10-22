@@ -711,8 +711,9 @@ advance is 0.8's only because Prusa publishes none at 1.0. Prusa's own
 probably over-retracts and must be re-measured.
 
 The tools check the premise every time: if the PrusaResearch.ini they read
-publishes anything at 1.0, whether a common, a PA section, a profile, a draft
-or a binding, all three refuse to scale and say what they found.
+publishes anything at 1.0, whether a common, a PA section, a material family
+section, a profile, a draft or a binding, all three refuse to scale and say
+what they found.
 
 Held does not mean right. Between 0.6 and 0.8 Prusa itself also changes, among
 others, `top_solid_min_thickness` (0.9 → 1.2), `bottom_solid_min_thickness`,

@@ -572,6 +572,12 @@ class ScaledSize(Tool):
         'a 1.0 PA section': '[filament:*C1INDX_PLA_10_PA*]\nstart_filament_gcode = "M572 S0.01"\n',
         'a commented HF1.0 printer draft':
             '; [printer:Prusa CORE One INDX 8T HF1.0 nozzle]\n; retract_length = 0.5\n',
+        # Prusa's sized family sections, which it adds before (or without) any
+        # concrete profile: *PLA06HFC1INDX*, *FLEX06PGC1INDX* and so on at 0.6.
+        'a 1.0 high-flow family': '[filament:*PLA10HFC1INDX*]\nfilament_wipe = 1\n',
+        'a 1.0 standard family': '[filament:*FLEX10PGC1INDX*]\nfilament_wipe = 1\n',
+        'a 1.0 INDX filament common': '[filament:*C1INDX_10_common*]\nfilament_wipe = 1\n',
+        'a CORE One 1.0 printer common': '[printer:*C1_10*]\nmax_layer_height = 0.75\n',
     }
 
     def test_every_generator_refuses_once_prusa_publishes_10(self):

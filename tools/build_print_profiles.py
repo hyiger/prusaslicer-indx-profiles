@@ -130,15 +130,21 @@ def assert_unsourced(sections, drafts, dia):
     The scaling rule (nozzles.py, SCALED SIZES) is approved only for a size with
     no Prusa source at all, and every scaled artifact says "Prusa publishes
     nothing at <dia> mm". This checks that claim against the file being built
-    from instead of assuming it: any INDX common, PA section, print, printer or
-    filament profile, draft, binding or printer nozzle at <dia> stops the build,
+    from instead of assuming it: any INDX common, PA section, sized material
+    family (*PLA10HFC1INDX*), printer size common, print, printer or filament
+    profile, draft, binding or printer nozzle at <dia> stops the build,
     so a re-pinned PrusaResearch.ini that adds a 1.0 source cannot be silently
     ignored in favor of the scaled 0.8 values."""
     tok = dia.replace('.', '')                                   # '1.0' -> '10'
     num = format(Decimal(dia).normalize(), 'f')                  # '1.0' -> '1'
     names = re.compile('|'.join([
-        r'\*INDX_%s(hf)?_common\*' % tok,                        # per-nozzle INDX common
+        r'\*INDX_%s(hf)?_common\*' % tok,                        # per-nozzle INDX print common
+        r'\*C1INDX_%s_common\*' % tok,                           # per-nozzle INDX filament common
         r'\*C1INDX_\w+_%s_PA\*' % tok,                           # per-nozzle INDX PA
+        r'\*[A-Z]+%s(HF|PG|XL)[A-Za-z0-9+]*\*' % tok,            # sized family: *PLA10HFC1INDX*,
+                                                                 #   *FLEX10PGC1INDX*, *ABS10HF*
+        r'\*C1L?_%s\*' % tok,                                     # CORE One printer size common
+        r'\*\w+_common%s\*' % tok,                                # other printers' size commons
         r'HF%s(?![\d.])' % re.escape(dia),                       # HF1.0 anything
         r'@COREONE(INDX)? %s(?![\d.])' % re.escape(dia),         # standard <dia> variants
         r' %s nozzle(?![\w])' % re.escape(dia),                  # <dia> printers
