@@ -11,7 +11,9 @@ anchors, that no released profile inherits from.
 
 This resolves the requested commons and emits them as usable profiles.
 
-Geometry is sourced verbatim. Speeds are only derived where Prusa has not done
+Geometry is sourced verbatim, except at HF1.0, which Prusa publishes nothing for:
+there the line widths and layer ladder are 0.8's scaled by 1.25 (nozzles.py,
+SCALED SIZES). Speeds are only derived where Prusa has not done
 a speed pass on the size-specific common - see tools/nozzles.py. Inheritance
 cannot cross bundle files, so values are embedded rather than referenced. Keys
 the chain does not set are left to PrusaSlicer's defaults, as upstream does.
@@ -30,15 +32,17 @@ a few speeds.
 """
 import argparse
 import collections
+from decimal import Decimal
 import io
 import re
 import sys
 import textwrap
 
-from nozzles import NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, speed_for
+from nozzles import (NOZZLES, STD_VALIDATED, TIERS, COMMON_EDITS, SIZE_LABELS,
+                     is_width, scale, speed_for)
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.4.2'
+BUNDLE_VERSION = '0.5.0'
 
 # Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
 STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}
@@ -120,6 +124,45 @@ def printer_models(cond):
     return m.group(1)
 
 
+def assert_unsourced(sections, drafts, dia):
+    """Refuse to scale a size Prusa has published anything for.
+
+    The scaling rule (nozzles.py, SCALED SIZES) is approved only for a size with
+    no Prusa source at all, and every scaled artifact says "Prusa publishes
+    nothing at <dia> mm". This checks that claim against the file being built
+    from instead of assuming it: any INDX common, PA section, print, printer or
+    filament profile, draft, binding or printer nozzle at <dia> stops the build,
+    so a re-pinned PrusaResearch.ini that adds a 1.0 source cannot be silently
+    ignored in favor of the scaled 0.8 values."""
+    tok = dia.replace('.', '')                                   # '1.0' -> '10'
+    num = format(Decimal(dia).normalize(), 'f')                  # '1.0' -> '1'
+    names = re.compile('|'.join([
+        r'\*INDX_%s(hf)?_common\*' % tok,                        # per-nozzle INDX common
+        r'\*C1INDX_\w+_%s_PA\*' % tok,                           # per-nozzle INDX PA
+        r'HF%s(?![\d.])' % re.escape(dia),                       # HF1.0 anything
+        r'@COREONE(INDX)? %s(?![\d.])' % re.escape(dia),         # standard <dia> variants
+        r' %s nozzle(?![\w])' % re.escape(dia),                  # <dia> printers
+    ]))
+    bound = re.compile(r'nozzle_diameter\[\d+\]\s*==\s*%s(\.0+)?(?![\d.])' % re.escape(num))
+    fitted = re.compile(r'^\s*%s(\.0+)?\s*(,|$)' % re.escape(num))
+    hits = []
+    for where, secs in (('', sections), ('commented draft ', drafts)):
+        for name, keys in secs.items():
+            if names.search(name):
+                hits.append('%s[%s]' % (where, name))
+            if bound.search(keys.get('compatible_printers_condition', '')):
+                hits.append('%s[%s] binds on nozzle_diameter == %s' % (where, name, dia))
+            if name.startswith('printer:') and fitted.match(keys.get('nozzle_diameter', '')):
+                hits.append('%s[%s] has a %s mm nozzle' % (where, name, dia))
+    if hits:
+        raise SystemExit(
+            'refusing: %s mm is built by the scaling rule only because Prusa publishes\n'
+            '          nothing at %s mm, but this PrusaResearch.ini does:\n            %s\n'
+            '          Read Prusa\'s %s mm data instead of scaling past it; that needs a\n'
+            '          human decision (CLAUDE.md, non-negotiable 1).'
+            % (dia, dia, '\n            '.join(sorted(set(hits))[:12]), dia))
+
+
 SPEED_KEYS = [('perimeter_speed', 'perim', 'perimeter_extrusion_width'),
               ('external_perimeter_speed', 'ext', 'external_perimeter_extrusion_width'),
               ('small_perimeter_speed', 'small', 'external_perimeter_extrusion_width'),
@@ -155,6 +198,9 @@ def build_nozzle(vendor, noz, report, edits):
             edits.append(('', key, common.get(key), val, why))
         common[key] = val
 
+    if noz.scaled_from:
+        scale_common(common, noz, edits)
+
     variants = collections.OrderedDict()
     for tier_key, tier_label, idx in TIERS:
         h = noz.layers[idx]
@@ -181,6 +227,41 @@ def build_nozzle(vendor, noz, report, edits):
 
     report.append((noz, list(variants), common))
     return common, variants
+
+
+def scale_common(common, noz, edits):
+    """A size Prusa publishes nothing for (nozzles.py, SCALED SIZES): scale the
+    source size's line widths by the diameter ratio and move its size labels.
+    Every other key of the source common is held as it is."""
+    src = noz.scaled_from
+    widths = sorted(k for k in common if is_width(k))
+    if not widths:
+        raise SystemExit('refusing: %s has no line widths to scale for %s mm'
+                         % (noz.common, noz.dia))
+    for key in widths:
+        old = common[key]
+        # A percentage is already relative to the nozzle, and 0 means "auto":
+        # scaling either would double-scale or invent a width. Refuse.
+        if old.endswith('%') or float(old) <= 0:
+            raise SystemExit('refusing: %s %s = %s is not an absolute width, so it '
+                             'cannot be scaled to %s mm' % (noz.common, key, old, noz.dia))
+        new = scale(old, noz.ratio)
+        edits.append(('', key, old, new,
+                      'line width: Prusa\'s %s mm value x %s/%s, half-up to 0.01. '
+                      'Prusa publishes nothing at %s mm' % (src, noz.dia, src, noz.dia)))
+        common[key] = new
+    for key, (pattern, what) in sorted(SIZE_LABELS.items()):
+        old = common.get(key, '')
+        want, got = pattern % src, pattern % noz.dia
+        hits = len(re.findall(re.escape(want) + r'(?![\d.])', old))
+        if hits != 1:
+            raise SystemExit('refusing: %s %s names %s mm %d times, not once, so the '
+                             'size label cannot be moved to %s mm safely:\n  %s'
+                             % (noz.common, key, src, hits, noz.dia, old))
+        new = re.sub(re.escape(want) + r'(?![\d.])', got, old)
+        edits.append(('', key, old, new, 'size label, moved from %s to %s mm: %s'
+                      % (src, noz.dia, what)))
+        common[key] = new
 
 
 def build_std(vendor, dia, report, edits):
@@ -244,6 +325,8 @@ def main():
                 status = 'NO TARGETS - speeds untouched'
             if n.shipped:
                 status = 'SHIPPED BY PRUSA - not built'
+            if n.scaled_from:
+                status = 'SCALED FROM %s - UNVALIDATED' % n.scaled_from
             print('%-6s %-22s %-22s %s' % (
                 d, n.common, '/'.join('%.2f' % x for x in n.layers), status))
             print('%-6s %s' % ('', '  ' + (n.shipped or n.note)))
@@ -271,6 +354,11 @@ def main():
 
     vendor = load(args.vendor)
     version = vendor.get('vendor', {}).get('config_version', '?')
+    scaled = [d for d in sorted(set(wanted), key=float) if NOZZLES[d].scaled_from]
+    if scaled:
+        drafts = load_drafts(args.vendor)
+        for dia in scaled:
+            assert_unsourced(vendor, drafts, dia)
 
     buf = io.StringIO()
     w = buf.write
@@ -294,11 +382,19 @@ def main():
         noz = NOZZLES[dia]
         edits = []
         common, variants = build_nozzle(vendor, noz, report, edits)
-        w('\n# ---- %s mm : resolved copy of Prusa %s\n' % (dia, noz.common))
+        if noz.scaled_from:
+            w('\n# ---- %s mm : SCALED from Prusa %s (%s mm). Prusa publishes nothing\n'
+              '#      at %s mm: line widths and layers x%s, everything else held at %s mm\n'
+              '#      apart from the per-size COMMON_EDITS listed below.\n'
+              % (dia, noz.common, noz.scaled_from, dia, noz.ratio.normalize(), noz.scaled_from))
+        else:
+            w('\n# ---- %s mm : resolved copy of Prusa %s\n' % (dia, noz.common))
         if not noz.validated:
             w('# UNVALIDATED: %s\n' % noz.note)
         if edits:
-            w('#\n# Changed from Prusa\'s common (COMMON_EDITS, then per tier Nozzle.extra):\n')
+            w('#\n# Changed from Prusa\'s common (COMMON_EDITS%s, then per tier '
+              'Nozzle.extra):\n' % (', then the %s/%s scaling and size labels'
+                                     % (dia, noz.scaled_from) if noz.scaled_from else ''))
             w(''.join(l + '\n' for l in why_lines(edits)))
         if noz.flow:
             targets = ', '.join('%s %g' % (key[:-len('_speed')].replace('_', ' '), noz.flow[qk])
@@ -343,7 +439,11 @@ def main():
     print('wrote %s  (from PrusaResearch config_version %s)' % (args.out, version))
     warn = False
     for noz, names, common in report:
-        print('\n%s mm  <- %s   %d keys sourced' % (noz.dia, noz.common, len(common)))
+        if noz.scaled_from:
+            print('\n%s mm  <- %s, SCALED from %s mm x%s   %d keys'
+                  % (noz.dia, noz.common, noz.scaled_from, noz.ratio.normalize(), len(common)))
+        else:
+            print('\n%s mm  <- %s   %d keys sourced' % (noz.dia, noz.common, len(common)))
         if not noz.validated:
             warn = True
             print('  !! UNVALIDATED: %s' % noz.note)

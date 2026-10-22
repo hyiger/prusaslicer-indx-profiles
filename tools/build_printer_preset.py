@@ -27,7 +27,10 @@ the active printer's. Drop `inherits` and Prusa's own print and filament presets
 stop being offered - the 0.25 preset loses Prusa's three @COREONEINDX 0.25 print
 profiles, the 0.4 preset loses Generic FLEX and Prusament TPU 95A.
 
-Nothing here is invented. The nozzle-size delta is read out of Prusa's own
+Nothing here is invented, except at HF1.0, which Prusa publishes nothing for:
+build_scaled() builds the HF0.8 preset and scales only its layer-height limits
+by 1.25, moving the size labels (SCALED_PRINTER; nozzles.py, SCALED SIZES).
+Everywhere else, the nozzle-size delta is read out of Prusa's own
 CORE One `HF0.4` -> `HF<dia>` pair at run time, and each key transfers to INDX
 only where INDX agreed with CORE One at 0.4 - the rule derive_filaments.py
 applies to non-MVS keys.
@@ -62,8 +65,8 @@ import argparse
 import os
 import sys
 
-from build_print_profiles import load, load_drafts, resolve
-from nozzles import NOZZLES, STD_VALIDATED, TIERS
+from build_print_profiles import assert_unsourced, load, load_drafts, resolve
+from nozzles import NOZZLES, STD_VALIDATED, TIERS, scale
 
 BYLINE = 'hyiger'
 
@@ -171,6 +174,8 @@ def build(vendor, drafts, dia, model, report):
         raise SystemExit('refusing: Prusa ships print profiles for %s mm itself, so '
                          'build_print_profiles.py\n          emits none and '
                          'default_print_profile would dangle.' % dia)
+    if NOZZLES[dia].scaled_from:
+        return build_scaled(vendor, drafts, NOZZLES[dia], model, report)
     printer_model, base_name = MODELS[model]
 
     ref_name = REF_FMT % dia
@@ -189,6 +194,59 @@ def build(vendor, drafts, dia, model, report):
     fix_dock_fan(cfg, changed, report)
     cfg['inherits'] = base_name
     assert cfg['printer_model'] == printer_model, 'model mismatch'
+    return cfg, changed
+
+
+# A size Prusa publishes nothing for (nozzles.py, SCALED SIZES): the keys that
+# move, each with what it is. Every other key is held at the source size's preset.
+SCALED_PRINTER = {
+    'nozzle_diameter': 'the nozzle itself',
+    'printer_variant': 'variant tag names the nozzle',
+    'max_layer_height': None,   # scaled: a length proportional to the nozzle
+    'min_layer_height': None,
+    'default_print_profile': 'INDX pointer, moved to the Balanced profile this bundle emits',
+    'default_filament_profile': 'INDX pointer, moved to the filament this bundle emits',
+}
+
+
+def build_scaled(vendor, drafts, noz, model, report):
+    """The source size's preset, built from Prusa's own sources as usual, with
+    only the keys in SCALED_PRINTER moved to the new size. Retraction, wipe and
+    everything else stay exactly as the source size has them: at 1.0 that is
+    Prusa's own commented INDX HF0.8 printer draft."""
+    src = noz.scaled_from
+    cfg, changed = build(vendor, drafts, src, model, report)
+    at = {c[0]: i for i, c in enumerate(changed)}
+
+    def move(key, new, why):
+        if key in at:   # changed already on the way to the source size
+            k, old, _, why0 = changed[at[key]]
+            changed[at[key]] = (k, old, new, '%s; then for %s mm, %s' % (why0, noz.dia, why))
+        else:
+            changed.append((key, cfg[key], new, why))
+        cfg[key] = new
+
+    for key, why in SCALED_PRINTER.items():
+        if key == 'nozzle_diameter':
+            new = widen(cfg[key], noz.dia)
+        elif key == 'printer_variant':
+            new = 'HF' + noz.dia
+        elif key == 'default_print_profile':
+            new = balanced_profile(noz.dia)
+        elif key == 'default_filament_profile':
+            new = RETARGET[key] % noz.dia
+        else:
+            one = uniform(cfg[key])
+            if one is None:
+                raise SystemExit('refusing: HF%s %s is not uniform across tools (%s); '
+                                 'cannot scale it' % (src, key, cfg[key]))
+            new = widen(cfg[key], scale(one, noz.ratio))
+            why = ('HF%s value %s x %s/%s, half-up to 0.01: Prusa publishes nothing '
+                   'at %s mm' % (src, one, noz.dia, src, noz.dia))
+        move(key, new, why)
+    report.append('  SCALED: Prusa publishes nothing at %s mm. Built as HF%s, then the '
+                  '%d keys above moved;\n          every other key is held at HF%s.'
+                  % (noz.dia, src, len(SCALED_PRINTER), src))
     return cfg, changed
 
 
@@ -396,11 +454,21 @@ def emit(path, cfg, changed, dia, model, validated, kind='high flow', note=None,
             f.write('#   %s: %s -> %s\n'
                     % (key, old.split(',')[0], new.split(',')[0]))
             f.write('#       %s\n' % why)
-        if any(key == 'wipe' for key, _, _, _ in changed):
+        keys = [key for key, _, _, _ in changed]
+        behavior = [k for k in ('wipe', 'retract_speed', 'deretract_speed',
+                                 'retract_before_wipe') if k in keys]
+        if behavior == ['wipe']:
             f.write('#\n')
             f.write('# wipe is the one behaviour change rather than a dimension.\n')
             f.write('# It is Prusa\'s own choice above 0.4, but has never run on an\n')
             f.write('# INDX toolchanger. Set it back to 0 if tool changes string.\n')
+        elif behavior:
+            f.write('#\n')
+            f.write('# Behavior changes, not dimensions:\n')
+            f.write('#   %s\n' % ', '.join(behavior))
+            f.write('# All are Prusa\'s own, from its commented INDX printer draft\n')
+            f.write('# (see above), and none has been printed here. Set wipe back\n')
+            f.write('# to 0 if tool changes string.\n')
         f.write('\n')
         for k in sorted(cfg):
             f.write('%s = %s\n' % (k, cfg[k]))
@@ -423,6 +491,10 @@ def main():
     vendor = load(a.prusa_ini)
     drafts = load_drafts(a.prusa_ini)
     version = vendor.get('vendor', {}).get('config_version', '?')
+    if not a.std:
+        for dia in a.nozzle:
+            if dia in NOZZLES and NOZZLES[dia].scaled_from:
+                assert_unsourced(vendor, drafts, dia)   # before any preset is written
     models = a.model or ['8T']
     os.makedirs(a.outdir, exist_ok=True)
 
@@ -442,6 +514,12 @@ def main():
                 cfg, changed = build(vendor, drafts, dia, model, report)
                 name = 'Prusa CORE One INDX %s HF%s nozzle' % (model, dia)
                 validated, note, kind = NOZZLES[dia].validated, None, 'high flow'
+                src = NOZZLES[dia].scaled_from
+                if src:
+                    note = ('SCALED: Prusa publishes nothing at %s mm. This is the HF%s '
+                            'preset with only\n# the nozzle, the layer-height limits (x%s) '
+                            'and the size labels moved;\n# retraction and every other key '
+                            'are held at HF%s.' % (dia, src, NOZZLES[dia].ratio.normalize(), src))
             path = os.path.join(a.outdir, name + '.ini')
             emit(path, cfg, changed, dia, model, validated, kind, note, version)
 
