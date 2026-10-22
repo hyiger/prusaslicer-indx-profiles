@@ -60,7 +60,7 @@ already supplies (Generic FLEX 3.5 = Generic FLEX @COREONE 0.6, Prusament PLA
 28 / 2) for the CORE One one, which is what the first rule exists to prevent.
 The fourth divergence, Prusament PLA slowdown_below_layer_time 15 against 9, is
 not an MVS, and restates both parents: Prusa's own *PLA06HFC1INDX* types 15
-too. See README "Known gaps".
+too. See docs/PROVENANCE.md, "Gaps in detail".
 
 At HF1.0, which Prusa publishes nothing for (nozzles.py, SCALED SIZES), every
 value - MVS and pressure advance included - is derived at 0.8 as above and only
@@ -515,7 +515,7 @@ def main():
 
     if draft_report:
         print('\nPrusa\'s commented "@COREONEINDX HF%s" drafts disagree here, and are not '
-              'adopted\n(see README "Known gaps"):' % src)
+              'adopted\n(see docs/PROVENANCE.md, "Gaps in detail"):' % src)
         print('%-*s %-34s %8s %8s' % (w, 'material', 'key', 'draft', 'derived'))
         print('-' * (w + 54))
         for m, k, d, v in draft_report:

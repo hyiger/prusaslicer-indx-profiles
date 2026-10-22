@@ -2,7 +2,7 @@
 Synthetic-INI tests for the generators' refusals and guards.
 
 Each test writes a tiny PrusaResearch.ini-shaped file, runs a generator on it the
-way the README recipe does, and checks what it emitted, or that it refused and
+way the CLAUDE.md recipe does, and checks what it emitted, or that it refused and
 wrote nothing. None needs a real PrusaResearch.ini.
 
     python3 -m unittest discover -s tests -v
