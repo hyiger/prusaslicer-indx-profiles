@@ -8,7 +8,9 @@ is the entire variant list for both `COREONE_INDX8T` and `COREONE_INDX4T`.
 Prusa also ships print profiles for 0.25 and 0.3 mm, but no printer for them
 (and there is no 0.3 mm INDX nozzle at all), and its INDX filaments bind to a
 high-flow 0.4 nozzle. Fit any other toolhead
-and the print profile list narrows to nothing and the filament dropdown empties.
+and the print profile list narrows to nothing and the filament dropdown empties
+(almost: on a 1.0 nozzle nine of Prusa's 0.4 filaments still appear, see
+[Verify](#4-verify)).
 
 The print profiles here install as **read-only system presets**: lock icon,
 reset-to-system-value arrows, no clutter in your own preset list.
@@ -16,6 +18,9 @@ reset-to-system-value arrows, no clutter in your own preset list.
 **Currently built:**
 
 - **HF0.6**: high-flow 0.6 mm (Bondtech CHT).
+- **HF1.0**: high-flow 1.0 mm (Bondtech CHT). Prusa publishes nothing at 1.0, so
+  this is the 0.8 setup with its line widths and layer heights scaled up
+  ([how](#the-10-mm-nozzle-is-scaled-not-sourced)). Not yet test printed.
 - **0.4 standard**: a standard (non-high-flow) 0.4 mm nozzle. Not yet test printed.
 - **0.25 standard**: a standard 0.25 mm nozzle, using Prusa's own 0.25 print profiles. Not yet test printed.
 
@@ -28,10 +33,11 @@ The generators handle other high-flow sizes too; see
 
 ```
 vendor/
-  hyigerINDX.ini                  vendor bundle — print profiles (HF0.6, standard 0.4)
+  hyigerINDX.ini                  vendor bundle — print profiles (HF0.6, HF1.0, standard 0.4)
   hyigerINDX.idx                  version index
 filaments/
   hyigerINDX-0.6-filaments.ini    19 filament presets for HF0.6, for import
+  hyigerINDX-1.0-filaments.ini    19 filament presets for HF1.0 (HF0.8 values)
   hyigerINDX-0.4-filaments.ini    17 filament presets for a standard 0.4
   hyigerINDX-0.25-filaments.ini   14 filament presets for a standard 0.25
 personal/
@@ -41,6 +47,7 @@ personal/
                                   a config bundle (see personal/README.md)
 printer/
   Prusa CORE One INDX 8T HF0.6 nozzle.ini   flattened printer presets
+  Prusa CORE One INDX 8T HF1.0 nozzle.ini
   Prusa CORE One INDX 8T 0.4 nozzle.ini
   Prusa CORE One INDX 8T 0.25 nozzle.ini
 tools/
@@ -91,6 +98,39 @@ upstream: there is no CORE One PVA at any size to scale from, so it is skipped.
 | Fiberlogy BVOH | 4 → **5** | | |
 
 MVS in mm³/s.
+
+### Print and filament presets (1.0 mm)
+
+Prusa publishes nothing at 1.0 mm, so these are the 0.8 mm setup scaled up, as
+described in [The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced).
+
+| Profile | Layer | Perim | Ext perim | Infill | Solid | Top solid |
+|---|---|---|---|---|---|---|
+| `0.38mm Detail` | 0.38 | 80 | 60 | 95 | 85 | 40 |
+| `0.50mm Balanced ★` | 0.50 | 65 | 50 | 70 | 65 | 30 |
+| `0.69mm Draft` | 0.69 | 45 | 35 | 55 | 50 | 25 |
+
+Line widths are 1.13 mm (0.9 at 0.8). The speeds are solved from the 0.8
+profiles' flow targets, so they are slower than 0.8's on the wider, taller line
+(Balanced perimeter 65 mm/s against 100). Rounding each speed to 5 mm/s leaves
+individual features between about 6% below and 12% above 0.8's flow rate; the
+filament's MVS, held at 0.8's, is the hard cap either way.
+
+The filaments are exactly the HF0.8 presets, rebound to a 1.0 nozzle, so max
+volumetric speed (MVS, mm³/s) and pressure advance (PA) are 0.8's:
+
+| Material | MVS | PA | Material | MVS | PA |
+|---|---|---|---|---|---|
+| Fiberlogy BVOH | 8 | 0.01 | Prusament PETG Carbon Fiber | 22 | 0.02 |
+| Generic ABS | 36 | 0.01 | Prusament PETG V0 | 27 | 0.02 |
+| Generic FLEX | 6 | 0 | Prusament PLA | 42 | 0.013 |
+| Generic PETG | 28 | 0.02 | Prusament PLA Blend | 20 | 0.013 |
+| Generic PLA | 28 | 0.013 | Prusament PVB | 19 | 0.013 |
+| Generic PLA Silk | 21 | 0.013 | Prusament TPU 95A | 6 | 0 |
+| Prusament ASA | 42 | 0.01 | Prusament Woodfill | 15 | 0.013 |
+| Prusament PC Blend | 36 | 0.016 | Prusament rPLA | 14 | 0.013 |
+| Prusament PC Blend Carbon Fiber | 26 | 0.016 | Verbatim BVOH | 8 | 0.01 |
+| Prusament PETG | 31 | 0.02 | | | |
 
 ### Print profiles (standard 0.4 mm)
 
@@ -179,9 +219,10 @@ startup, and these attach themselves to your existing Prusa INDX printer.
 ### 2. Install the printer preset
 
 **Not optional.** Prusa declares `variants = HF0.4` for both INDX models, so
-there is no HF0.6 or standard-nozzle printer to pick in the Configuration
-Wizard. The print profiles bind on the nozzle (`nozzle_diameter[0]==0.6`, or
-`nozzle_diameter[0]==0.4 and ! nozzle_high_flow[0]` for a standard 0.4); with
+there is no HF0.6, HF1.0 or standard-nozzle printer to pick in the Configuration
+Wizard. The print profiles bind on the nozzle (`nozzle_diameter[0]==0.6`,
+`nozzle_diameter[0]==1.0`, or `nozzle_diameter[0]==0.4 and ! nozzle_high_flow[0]`
+for a standard 0.4); with
 Prusa's HF0.4 printer selected they load correctly and are then filtered out of
 the dropdown, which looks exactly like the bundle having failed to install.
 
@@ -190,6 +231,7 @@ Copy the preset for each nozzle you fit into `printer/` in your data directory:
 ```bash
 # macOS
 cp "printer/Prusa CORE One INDX 8T HF0.6 nozzle.ini" \
+   "printer/Prusa CORE One INDX 8T HF1.0 nozzle.ini" \
    "printer/Prusa CORE One INDX 8T 0.4 nozzle.ini" \
    "printer/Prusa CORE One INDX 8T 0.25 nozzle.ini" \
    ~/Library/Application\ Support/PrusaSlicer/printer/
@@ -200,8 +242,8 @@ name matches an already-loaded system preset, so if Prusa releases an INDX
 printer of the same name, PrusaSlicer loads Prusa's and skips yours — enable that
 variant in the Configuration Wizard then. Prusa already has commented-out drafts
 for 8T and 4T at `0.25`, `HF0.6` and `HF0.8`, so the HF0.6, HF0.8 and 0.25
-presets are all exposed to this. The standard 0.4 is the one Prusa has no draft
-for.
+presets are all exposed to this. The standard 0.4 and HF1.0 are the ones Prusa
+has no draft for.
 
 Quit and relaunch, then select it. It appears as a normal user preset that
 inherits from Prusa's shipping 0.4 profile, so every changed value keeps its
@@ -257,6 +299,10 @@ nozzle]` draft sets all five for an INDX toolchanger — `retract_length 0.6`,
 it unvalidated. By hand, use those five values along with nozzle diameter `0.8`,
 max layer height `0.6`, min `0.2`, `printer_variant HF0.8` and `wipe` on.
 
+1.0 has no Prusa values to copy. The generated preset is the 0.8 one above
+with nozzle diameter `1.0`, max layer height `0.75`, min `0.25` and
+`printer_variant HF1.0`; retraction and `wipe` stay at 0.8's.
+
 For a standard nozzle, uncheck **High flow nozzle** on every tool and set
 `printer_variant` to `0.4`. For 0.25, set `printer_variant` to `0.25` instead,
 plus nozzle diameter `0.25`, retraction length `0.7`, lift Z `0.15`, and layer
@@ -266,7 +312,7 @@ printer.
 ### 3. Import the filament presets
 
 **File → Import → Import Config Bundle…** and select the file for your nozzle
-size: `filaments/hyigerINDX-0.6-filaments.ini`, `-0.4-` or `-0.25-`.
+size: `filaments/hyigerINDX-0.6-filaments.ini`, `-1.0-`, `-0.4-` or `-0.25-`.
 
 These import as user presets, which is deliberate — see
 [Why filaments aren't in the vendor bundle](#why-filaments-arent-in-the-vendor-bundle).
@@ -279,8 +325,20 @@ should see:
 | Printer | Print profiles | Filaments |
 |---|---|---|
 | HF0.6 | 3, with a lock icon | 19 |
+| HF1.0 | 3, with a lock icon | 19, plus up to nine of Prusa's own `@COREONEINDX HF0.4` presets: don't pick those |
 | 0.4 (standard) | 4, with a lock icon | 17, plus Prusa's Generic FLEX and TPU 95A |
 | 0.25 (standard) | Prusa's 3 | 14 |
+
+On HF1.0 the filament list also shows Prusa's own `@COREONEINDX HF0.4` presets
+for Prusament ASA, PETG, PETG V0 and PETG Carbon Fiber, Generic ABS, PETG and PVA,
+and both BVOHs, whichever you have installed. Prusa binds them by *excluding*
+0.5, 0.6 and 0.8 rather than by naming 0.4, and 1.0 is not in its list, so they
+pass. They carry 0.4 max volumetric speed and pressure advance (Prusament PETG:
+MVS 20 and PA 0.058, against 31 and 0.02 in the HF1.0 preset). Pick the
+`@COREONEINDX HF1.0` ones. Watch for it when switching printers: PrusaSlicer
+keeps a filament that is still compatible, so a tool holding one of these on the
+HF0.4 printer silently keeps it on HF1.0. `derive_filaments.py -n 1.0` lists
+them. Prusa's bindings can't be changed from this repo.
 
 If the print profiles don't appear, check `nozzle_diameter` and **High flow
 nozzle** really are set on every tool. The print profiles bind on
@@ -307,8 +365,8 @@ Every number is a **starting point**. Order:
 
 1. **Max volumetric speed** — the real governor. Print profile speeds are
    ceilings; MVS is what actually limits flow, and it is per filament.
-2. **Pressure advance** — the shipped figure is Prusa's own for your nozzle,
-   not a scaled one: at HF0.6 it comes from `*C1INDX_<FAM>_06_PA*`, or from
+2. **Pressure advance** — the shipped figure is Prusa's own for your nozzle
+   where Prusa publishes one, never a scaled one: at HF0.6 it comes from `*C1INDX_<FAM>_06_PA*`, or from
    Prusa's commented HF0.6 draft where that is more specific. Prusa's INDX PA
    *falls* as the nozzle grows (PLA 0.031 at 0.4 → 0.02 at 0.6), so do not
    assume a bigger nozzle wants more. A CHT does have a longer, split melt path
@@ -323,7 +381,10 @@ standard and high-flow 0.4 bases share one PA base (`*C1INDX_PET_04_PA*` 0.048,
 preset's own figure is kept. Only the PLA family has no INDX standard figure at
 all. On a 0.25 it is Prusa's 0.25 value (PLA 0.1, PETG 0.15, PC 0.14,
 ABS/ASA/BVOH 0.09), two to four times the 0.4 figure, so widen a PA test's range
-to about 0.2.
+to about 0.2. At HF1.0 it is Prusa's 0.8 figure (`*C1INDX_<FAM>_08_PA*`), held,
+because Prusa publishes none at 1.0; given Prusa's falling trend, expect your
+measured value to land below it. See
+[The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced).
 
 ---
 
@@ -342,6 +403,7 @@ python3 tools/build_print_profiles.py <PrusaResearch.ini> /dev/null --list
 | 0.5 | `*INDX_05hf_common*` | 0.15 / 0.20 / 0.25 | **unvalidated** targets |
 | 0.6 | `*INDX_06hf_common*` | 0.20 / 0.25 / 0.32 | validated, in use |
 | 0.8 | `*INDX_08hf_common*` | 0.30 / 0.40 / 0.55 | **unvalidated** targets |
+| 1.0 | `*INDX_08hf_common*`, scaled ×1.25 | 0.38 / 0.50 / 0.69 | **scaled from 0.8**, unvalidated; [no Prusa source](#the-10-mm-nozzle-is-scaled-not-sourced) |
 
 Prusa renamed the high-flow commons (`*INDX_06_common*` became
 `*INDX_06hf_common*`) by PrusaResearch 2.5.11.
@@ -349,7 +411,7 @@ Prusa renamed the high-flow commons (`*INDX_06_common*` became
 To build more than one size into the bundle:
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 --std 0.4
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.8
 python3 tools/derive_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.8-filaments.ini -n 0.8
 ```
@@ -386,7 +448,7 @@ high-flow pair, and Prusa publishes none below 0.4, so it refuses 0.25 and 0.3.
 ### Standard nozzles
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 --std 0.4
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 1.0 --std 0.4
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.4 -n 0.25 --std
 python3 tools/derive_std_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.4-filaments.ini -n 0.4
 python3 tools/derive_std_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.25-filaments.ini -n 0.25
@@ -426,13 +488,15 @@ allows more than 39 (see [Print profile speeds](#print-profile-speeds--derived-a
 This repo also prefers the CORE One HF0.6 layer ladder and its own three-tier
 naming to Prusa's drafted Balanced/Draft/Coarse/Extra Coarse lineup.
 
-`build_print_profiles.py` resolves the requested common and embeds it verbatim —
+`build_print_profiles.py` resolves the requested common and embeds it verbatim
+(except at 1.0, whose widths are scaled and size labels moved; see
+[The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced)) —
 widths, solid-layer counts, support parameters, infill anchors, overhang speeds,
 minimum thicknesses. Inheritance cannot cross bundle files, so values are copied
 rather than referenced. Keys the chain doesn't set are left to PrusaSlicer's
 defaults, exactly as Prusa's own profiles do.
 
-Five keys are changed in the common of every size:
+Five keys are changed in the common of every size, 1.0 included:
 
 | Key | Upstream | Here | Why |
 |---|---|---|---|
@@ -606,6 +670,62 @@ rather than reaching a standard nozzle. A per-nozzle common Prusa later puts
 under a standard base may change only keys reviewed into `COMMON_ADOPT`, and
 the bundle header and `filament_notes` record them.
 
+### The 1.0 mm nozzle is scaled, not sourced
+
+PrusaResearch 2.5.12 has nothing at 1.0 mm: no INDX common, no CORE One 1.0 or
+HF1.0 variant, no print, printer or filament profile, no commented draft and no
+pressure-advance section. Everything else in this repo is read out of Prusa's
+data; 1.0 cannot be, so it is the one size built by a rule instead.
+
+**The rule.** Start from the 0.8 mm setup, built from Prusa's sources as usual.
+Scale only the values that are lengths proportional to the nozzle, by
+1.0 / 0.8 = 1.25, rounded half-up to 0.01. That is Prusa's own rounding: it
+writes 1.125 × 0.6 = 0.675 as 0.68 in `*INDX_06hf_common*`. PrusaSlicer agrees
+independently: for a width left unset it uses 1.125 × the nozzle diameter, which
+at 1.0 is 1.125, the 1.13 below before rounding. Scaled:
+
+- the eight line widths (0.9 → 1.13, first layer 1 → 1.25, top infill 0.8 → 1,
+  support 0.65 → 0.81)
+- the layer ladder (0.30 / 0.40 / 0.55 → 0.38 / 0.50 / 0.69)
+- the printer's layer-height limits (max 0.6 → 0.75, min 0.2 → 0.25)
+
+Values that only name the size are moved to 1.0 rather than scaled: the profile
+binding (`nozzle_diameter[0]==1.0`), the G-code file name (`_1.0n_`), the
+printer's `nozzle_diameter`, `printer_variant` and default profiles.
+
+**Everything else is held at 0.8**, as this repo builds 0.8: the flow targets
+the speeds are solved from; each filament's MVS (Prusament PLA 42, the INDX 0.4
+value 28 scaled by Prusa's CORE One HF0.4 → HF0.8 pair, 24 → 36, the same method
+that gives HF0.6 its test-printed 35; materials with no Prusa high-flow profile
+fall back to the plain `@COREONE` → `@COREONE 0.8` pair, as each preset's notes
+record); Prusa's own 0.8 pressure advance (`*C1INDX_<FAM>_08_PA*`); and the
+retraction from Prusa's commented INDX HF0.8 printer draft. The per-size
+`COMMON_EDITS` still apply, so `interlocking_beam_width` is 2 × nozzle: 2 at
+1.0, where 0.8 builds 1.6.
+
+What holding buys: the speeds are solved from 0.8's flow targets, so each
+feature runs within about 6% below to 12% above 0.8's rate (the 5 mm/s
+rounding), and the held filament MVS caps both sizes alike. The pressure
+advance is 0.8's only because Prusa publishes none at 1.0. Prusa's own
+0.4 → 0.6 → 0.8 trend falls, which suggests 1.0 wants less, so the held figure
+probably over-retracts and must be re-measured.
+
+The tools check the premise every time: if the PrusaResearch.ini they read
+publishes anything at 1.0, whether a common, a PA section, a material family
+section, a profile, a draft or a binding, all three refuse to scale and say
+what they found.
+
+Held does not mean right. Between 0.6 and 0.8 Prusa itself also changes, among
+others, `top_solid_min_thickness` (0.9 → 1.2), `bottom_solid_min_thickness`,
+`support_material_contact_distance`, `support_tree_tip_diameter`, the perimeter
+accelerations and `fill_density`. At 1.0 all of these stay at their 0.8 values.
+So does `first_layer_height` (0.2), which leaves it below the scaled
+`min_layer_height` (0.25). PrusaSlicer 2.9.6 still slices it: `Print::validate`
+only rejects a first layer taller than the nozzle, and the first layer is not
+clamped to `min_layer_height`. Every scaled width also passes its width check
+(wider than the layer, narrower than 3 × the nozzle).
+This is all unvalidated, and the generators say so in every file they write.
+
 ### Prusa's commented-out drafts
 
 Prusa keeps unreleased work in `PrusaResearch.ini` as commented-out sections —
@@ -679,7 +799,7 @@ whatsoever**. Three separate mechanisms each rule out one source:
 
 | Source | Count | Result | Reason |
 |---|---|---|---|
-| `@COREONEINDX HF0.4` | 20 | excluded | all but FLEX and TPU 95A require `nozzle_high_flow[0]`; 11 pin `nozzle_diameter[0]==0.4` and the PET/ABS/BVOH/PVA nine bind by exclusion (`!=0.8 and !=0.6 and !=0.5`) |
+| `@COREONEINDX HF0.4` | 20 | excluded | all but FLEX and TPU 95A require `nozzle_high_flow[0]`; 11 pin `nozzle_diameter[0]==0.4` and the PET/ABS/BVOH/PVA nine bind by exclusion (`!=0.8 and !=0.6 and !=0.5`), which does not name 1.0, so those nine do reach an HF1.0 printer |
 | `@COREONE HF0.6` | 143 | excluded | `printer_model` uses `regex_match`, so `COREONE_INDX8T` does not match `/(COREONE\|COREONEOAK\|…)/` |
 | `Templates.ini` | 201 | excluded | every profile carries `printer_notes!~/.*NO_TEMPLATES.*/`, and Prusa puts `NO_TEMPLATES` in the INDX printer notes |
 
@@ -751,7 +871,10 @@ tests, so no printer accepts both.
   0.8 case is weakest: Prusa's `@COREONE 0.8` MVS figures are for a standard
   brass nozzle (Prusament PLA = 19, *below* the HF0.6 figure of 30) and don't
   transfer to a high-flow CHT. Its *printer* preset is better founded — Prusa
-  drafted one — but still unprinted.
+  drafted one — but still unprinted. **HF1.0** is weaker still: it rests on the
+  0.8 numbers plus a scaling rule, with no Prusa source at 1.0 at all. See
+  [The 1.0 mm nozzle is scaled, not sourced](#the-10-mm-nozzle-is-scaled-not-sourced) for what is held at 0.8 and
+  what Prusa varies between sizes that is held anyway.
 - **Three tiers per size, not four.** Prusa's 0.4 lineup has a `Fine` as well.
   Add it in `nozzles.py`.
 - **Draft keeps the common extrusion width.** Prusa's 0.4 Draft widens

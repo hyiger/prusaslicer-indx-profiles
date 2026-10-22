@@ -7,8 +7,10 @@ file is for whoever edits the code.
 
 PrusaSlicer profiles for Prusa CORE One INDX toolheads at nozzle sizes Prusa
 ships no INDX printer for (its only variant is `HF0.4`): high-flow HF0.6 and
-standard, non-high-flow 0.4 and 0.25. HF0.6 and standard 0.4 print profiles
-install as read-only **system presets** via a vendor bundle. At 0.25 the print
+HF1.0, and standard, non-high-flow 0.4 and 0.25. HF0.6, HF1.0 and standard 0.4
+print profiles install as read-only **system presets** via a vendor bundle.
+HF1.0 is the one size Prusa publishes nothing for; it is 0.8 scaled up, under
+the exception to non-negotiable 1. At 0.25 the print
 profiles are Prusa's own `@COREONEINDX 0.25`, so only the printer and filaments
 come from here. Filament presets ship as one importable config bundle per size;
 printer presets ship as flattened user presets.
@@ -32,11 +34,31 @@ that.
    fabrication. (`flow=None` in `nozzles.py` is not a refusal: it passes
    Prusa's own speeds through untouched.) `personal/*.ini` are outside this
    rule.
+
+   **One exception, approved by the repo owner on 2026-10-21: HF1.0, scaled
+   from 0.8 by 1.0/0.8.** Prusa publishes nothing at 1.0 (no INDX common, no
+   print, printer or filament profile, no draft, no PA section), so nothing can
+   be resolved. It is built from 0.8 by one rule, `SCALED SIZES` in
+   `nozzles.py`: only lengths proportional to the nozzle (the line widths, the
+   layer ladder, the printer's layer-height limits) are scaled by 1.25, rounded
+   half-up to 0.01; values that merely name the size are moved; **everything
+   else is held** at 0.8, apart from the per-size `COMMON_EDITS`, which apply as
+   at every size (`interlocking_beam_width` 2 × nozzle). The premise is checked,
+   not assumed: `assert_unsourced()` in `build_print_profiles.py` makes all
+   three generators refuse if the PrusaResearch.ini they read publishes
+   anything at 1.0. The rule may not be extended to other value types, applied
+   to any other size, or used for a size Prusa has *any* source for, without a
+   new approval from the owner; the code is general, the approval is not.
+   HF1.0 is always `validated=False`, and every scaled or moved key carries a
+   reason in the emitted file.
 2. **Record provenance for anything changed.** `COMMON_EDITS` and `Nozzle.extra`
    in `nozzles.py`, `STD_EDITS` in `build_print_profiles.py`, `TRANSFER` /
    `DRAFT_ADOPT` / `DOCK_FAN` in `build_printer_preset.py`, `COMMON_ADOPT` in
    `derive_filaments.py` and `STD_SKIP` (per material) in
-   `derive_std_filaments.py` carry a reason string per entry. `RETARGET`
+   `derive_std_filaments.py` carry a reason string per entry, as do
+   `SIZE_LABELS` in `nozzles.py` and `SCALED_PRINTER` in
+   `build_printer_preset.py` for HF1.0; `scale_common()` and `build_scaled()`
+   write a generated reason for every scaled key. `RETARGET`
    (printer pointer templates) and `derive_filaments.py`'s `TRANSFER` (a bare
    key list) are each covered by one rule stated in their comment instead.
    Where the reasons surface varies. The printer presets list every changed key
@@ -69,7 +91,7 @@ that.
 ## Layout
 
 ```
-vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, standard 0.4 (0.25 uses Prusa's)
+vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, HF1.0, standard 0.4 (0.25 uses Prusa's)
 vendor/hyigerINDX.idx      handwritten  version index
 filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
 printer/*.ini              GENERATED  flattened printer presets
@@ -101,10 +123,11 @@ purpose.
 PR=~/Library/Application\ Support/PrusaSlicer/vendor/PrusaResearch.ini
 
 python3 tools/build_print_profiles.py "$PR" /dev/null --list
-python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 --std 0.4
-python3 tools/build_printer_preset.py "$PR" printer -n 0.6
+python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 -n 1.0 --std 0.4
+python3 tools/build_printer_preset.py "$PR" printer -n 0.6 -n 1.0
 python3 tools/build_printer_preset.py "$PR" printer -n 0.4 -n 0.25 --std
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.6-filaments.ini -n 0.6
+python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-1.0-filaments.ini -n 1.0
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.4-filaments.ini -n 0.4
 python3 tools/derive_std_filaments.py "$PR" filaments/hyigerINDX-0.25-filaments.ini -n 0.25
 ```
@@ -323,7 +346,9 @@ The 0.5, 0.6 and 0.8 commons (and `*INDX_03_common*`) inherit
 - **geometry** → the common's, verbatim, except keys changed with a recorded
   reason: `interlocking_beam_width` (2× nozzle, `COMMON_EDITS`) and the HF0.6
   per-tier overrides in `Nozzle.extra` (Draft `min_bead_width` 90%, Detail 5/4
-  solid layers)
+  solid layers). At a scaled size (1.0) the common is the source size's
+  (`*INDX_08hf_common*`) with its eight line widths scaled ×1.25 and its two
+  size labels moved (`scale_common()`); every other key is the 0.8 common's
 - **speeds** → the six main speeds solved from `nozzles.py` flow targets, only
   where upstream has no pass and targets exist; `bridge_speed = 30` is a
   `COMMON_EDITS` value, not solved
@@ -450,7 +475,10 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
 1. `NOZZLES` in `tools/nozzles.py` already has a `Nozzle` for every non-0.4 INDX
    print common Prusa defines (0.25, 0.3, 0.5, 0.6, 0.8), so building 0.5 or 0.8
    needs no new entry. A new high-flow size needs a new Prusa common first:
-   `Nozzle.common` must name one. Check that the nozzle physically exists for
+   `Nozzle.common` must name one. The one exception is HF1.0, built with
+   `scaled_nozzle()` from 0.8 under the owner's approval (non-negotiable 1);
+   its ladder is 0.8's, scaled, not read out. No other size may use
+   `scaled_nozzle()` without a new approval. Check that the nozzle physically exists for
    the INDX before building anything (there is no 0.2 or 0.3 INDX nozzle). Layer
    ladders come from Prusa's CORE One profiles for the same nozzle — read them
    out, do not invent them. `Nozzle` is high-flow only (`tag` is always
@@ -458,14 +486,43 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
    `BIND`/`BASE_SWAP` and `STD_VALIDATED` instead.
 2. Supply `flow` targets only with a defensible basis, and set
    `validated=False` until printed.
-3. Rebuild the vendor bundle with every size it carries (`-n 0.6 -n <dia> --std
-   0.4`: one bundle holds all sizes, so `-n <dia>` alone drops the rest), then
+3. Rebuild the vendor bundle with every size it carries (`-n 0.6 -n 1.0 -n <dia>
+   --std 0.4`, i.e. every size in the recipe above plus the new one: one bundle
+   holds all sizes, so `-n <dia>` alone drops the rest), then
    the printer preset (`build_printer_preset.py "$PR" printer -n <dia>`) and the
    filament bundle (`derive_filaments.py ... -n <dia>`). Commit all three.
 4. Bump `BUNDLE_VERSION` in `build_print_profiles.py`, add the matching line to
    the `.idx`, and update the README tables.
 
 ## Things that look wrong but aren't
+
+- **An HF1.0 printer is also offered nine of Prusa's own `@COREONEINDX HF0.4`
+  filaments** (Prusament ASA, PETG, PETG V0, PETG CF, Generic ABS, PETG, PVA,
+  both BVOHs). `*PETHFC1INDX*`, `*ABSHFC1INDX*` and `*ABSHFC1LINDX*` bind by
+  `nozzle_diameter[0]!=0.8 and !=0.6 and !=0.5 and nozzle_high_flow[0]`, and
+  that list does not name 1.0. Not fixable here: they are Prusa's presets.
+  `derive_filaments.py -n 1.0` lists them (`foreign_at()`), and the README's
+  Verify section warns users off them.
+- **HF1.0 layer heights are 0.38 / 0.50 / 0.69.** Untidy, and deliberate: they
+  are 0.8's 0.30 / 0.40 / 0.55 × 1.25, half-up to 0.01, by the same rule as the
+  widths. Rounding them to tidier numbers would be a second, undocumented rule.
+- **HF1.0 `first_layer_height` (0.2) is below its printer's `min_layer_height`
+  (0.25).** The first is held at 0.8's, the second is scaled. PrusaSlicer 2.9.6
+  does not object: `Print::validate` only rejects a first layer taller than the
+  nozzle, and `Slicing.cpp` uses `first_layer_height` as-is, not clamped to
+  `min_layer_height`. Scaling it would extend the rule past what was approved.
+- **HF1.0 speeds are lower than HF0.8's** (Balanced perimeter 65 against 100).
+  The flow targets are held at 0.8's, so the same mm³/s on a wider, taller line
+  is a slower one. The 5 mm/s rounding leaves a feature's rate between about 6%
+  below and 12% above 0.8's; the held filament MVS caps both alike.
+- **HF1.0 filaments are byte-for-byte the HF0.8 ones** apart from the binding
+  and `filament_notes`, including MVS (Prusament PLA 42, this repo's HF0.8
+  derivation, not CORE One HF0.8's 36) and pressure advance (Prusa's
+  `*C1INDX_*_08_PA*`). Held, not forgotten.
+- **The HF1.0 vendor section's `output_filename_format` and binding differ
+  from Prusa's `*INDX_08hf_common*`.** They name the size, so `SIZE_LABELS`
+  moves them to 1.0; held, they would bind 1.0 profiles to a 0.8 nozzle and
+  name its G-code `_0.8n_`.
 
 - **`0.2` is rejected.** There is no 0.2 mm INDX nozzle, and Prusa defines no
   INDX common below `*INDX_025_common*`. Not a bug.

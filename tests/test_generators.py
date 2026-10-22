@@ -425,5 +425,176 @@ class PrintBundleReasons(Tool):
             '#   compatible_printers: unset -> (empty)', '#       condition-based binding only'])
 
 
+# --- nozzles.py SCALED SIZES: 1.0, which Prusa publishes nothing for ---------
+
+sys.path.insert(0, TOOLS)
+from decimal import Decimal  # noqa: E402
+from nozzles import NOZZLES, scale  # noqa: E402
+
+WIDTH_KEYS = ('extrusion_width', 'perimeter_extrusion_width',
+              'external_perimeter_extrusion_width', 'infill_extrusion_width',
+              'solid_infill_extrusion_width', 'top_infill_extrusion_width',
+              'first_layer_extrusion_width', 'support_material_extrusion_width')
+
+
+def print_common_08(width='0.9', cond='nozzle_diameter[0]==0.8',
+                    fname='{input_filename_base}_0.8n_{layer_height}mm.gcode'):
+    """*INDX_08hf_common* with absolute widths, both size labels, and two keys
+    the rule must leave alone."""
+    return '\n'.join(['[print:*INDX_08hf_common*]',
+                      'compatible_printers_condition = ' + cond,
+                      'output_filename_format = ' + fname,
+                      'top_solid_layers = 4',
+                      'fill_density = 15%']
+                     + ['%s = %s' % (k, width) for k in WIDTH_KEYS]) + '\n'
+
+
+PRINTERS_08 = '\n'.join([
+    '[printer:Prusa CORE One HF0.4 nozzle]', 'nozzle_diameter = 0.4',
+    'max_layer_height = 0.3', 'min_layer_height = 0.07', 'printer_variant = HF0.4', '',
+    '[printer:Prusa CORE One HF0.8 nozzle]', 'nozzle_diameter = 0.8',
+    'max_layer_height = 0.6', 'min_layer_height = 0.2', 'printer_variant = HF0.8', '',
+    '[printer:Prusa CORE One INDX 8T HF0.4 nozzle]', 'printer_model = COREONE_INDX8T',
+    'nozzle_diameter = 0.4,0.4', 'max_layer_height = 0.3,0.3',
+    'min_layer_height = 0.07,0.07', 'printer_variant = HF0.4', 'retract_length = 0.8,0.8',
+    'default_print_profile = 0.20mm Balanced ★ @COREONEINDX HF0.4',
+    'default_filament_profile = "Prusament PLA @COREONEINDX HF0.4"']) + '\n'
+
+FILAMENTS_08 = '\n'.join([
+    '[filament:*C1INDX_PLA_04_PA*]',
+    'start_filament_gcode = "M572 S0.031 ; Pressure advance\\nM573 R"', '',
+    '[filament:*C1INDX_PLA_08_PA*]',
+    'start_filament_gcode = "M572 S0.013 ; Pressure advance"', '',
+    '[filament:*PLAHFC1INDX*]', 'inherits = *C1INDX_common*; *C1INDX_PLA_04_PA*',
+    'compatible_printers_condition = ' + COND_HF04, '',
+    '[filament:*PLA08HFC1INDX*]', 'inherits = *C1INDX_common*; *C1INDX_PLA_08_PA*', '',
+    '[filament:Prusament PLA @COREONE HF0.4]', 'filament_max_volumetric_speed = 24', '',
+    '[filament:Prusament PLA @COREONE HF0.8]', 'filament_max_volumetric_speed = 36', '',
+    '[filament:Prusament PLA @COREONEINDX HF0.4]', 'inherits = *PLAHFC1INDX*',
+    'filament_max_volumetric_speed = 28']) + '\n'
+
+
+def sections(text):
+    """{section: {key: value}} of an emitted .ini, for whole-preset comparison."""
+    out, cur = {}, None
+    for line in text.splitlines():
+        if line.startswith('['):
+            cur = out.setdefault(line.strip('[]'), {})
+        elif cur is not None and ' = ' in line:
+            k, v = line.split(' = ', 1)
+            cur[k] = v
+    return out
+
+
+class ScaledSize(Tool):
+
+    def test_rule_rounds_half_up_as_prusa_does(self):
+        # Prusa writes 1.125 x 0.6 = 0.675 as 0.68 in *INDX_06hf_common*.
+        self.assertEqual(scale('0.6', Decimal('1.125')), '0.68')
+        self.assertEqual(scale('0.9', Decimal('1.25')), '1.13')
+        self.assertEqual(scale('0.8', Decimal('1.25')), '1')
+        self.assertEqual(scale('0.55', Decimal('1.25')), '0.69')
+
+    def test_10_is_08_with_its_ladder_scaled_and_all_else_held(self):
+        n, src = NOZZLES['1.0'], NOZZLES['0.8']
+        self.assertEqual((n.scaled_from, n.common), ('0.8', src.common))
+        self.assertEqual(n.layers, (0.38, 0.5, 0.69))
+        self.assertIs(n.flow, src.flow)
+        self.assertFalse(n.validated)
+
+    def test_print_bundle_scales_widths_moves_labels_holds_the_rest(self):
+        out = self.assertBuilds(self.run_tool(
+            'build_print_profiles.py', ini(VENDOR, print_common_08()), '-n', '1.0'))
+        common = sections(out)['print:*COREONEINDX HF1.0*']
+        for k in WIDTH_KEYS:
+            self.assertEqual(common[k], '1.13', k)
+        self.assertEqual(common['compatible_printers_condition'], 'nozzle_diameter[0]==1.0')
+        self.assertIn('_1.0n_', common['output_filename_format'])
+        self.assertNotIn('0.8n', common['output_filename_format'])
+        self.assertEqual(common['top_solid_layers'], '4')   # held
+        self.assertEqual(common['fill_density'], '15%')     # held
+        for name in ('0.38mm Detail', '0.50mm Balanced ★', '0.69mm Draft'):
+            self.assertIn('[print:%s @COREONEINDX HF1.0]' % name, out)
+        self.assertIn('SCALED from Prusa *INDX_08hf_common* (0.8 mm)', out)
+        self.assertIn('#   perimeter_extrusion_width: 0.9 -> 1.13', out)
+
+    def test_refuses_a_percentage_width(self):
+        self.assertRefuses(self.run_tool(
+            'build_print_profiles.py', ini(VENDOR, print_common_08(width='112.5%')),
+            '-n', '1.0'), 'is not an absolute width')
+
+    def test_refuses_a_size_label_it_cannot_find_once(self):
+        self.assertRefuses(self.run_tool(
+            'build_print_profiles.py',
+            ini(VENDOR, print_common_08(cond='printer_model=~/COREONE_INDX8T/')),
+            '-n', '1.0'), 'names 0.8 mm 0 times')
+
+    def test_printer_is_08_with_six_keys_moved(self):
+        r08 = self.run_tool('build_printer_preset.py', ini(VENDOR, PRINTERS_08), '-n', '0.8',
+                            out='printer')
+        r10 = self.run_tool('build_printer_preset.py', ini(VENDOR, PRINTERS_08), '-n', '1.0',
+                            out='printer')
+        self.assertEqual((r08.returncode, r10.returncode), (0, 0), r08.stderr + r10.stderr)
+
+        def read(name):
+            with open(os.path.join(self.out, name), encoding='utf-8') as f:
+                return sections('[p]\n' + f.read())['p']
+        p08 = read('Prusa CORE One INDX 8T HF0.8 nozzle.ini')
+        p10 = read('Prusa CORE One INDX 8T HF1.0 nozzle.ini')
+        moved = {k for k in set(p08) | set(p10) if p08.get(k) != p10.get(k)}
+        self.assertEqual(moved, {'nozzle_diameter', 'printer_variant', 'max_layer_height',
+                                 'min_layer_height', 'default_print_profile',
+                                 'default_filament_profile'})
+        self.assertEqual(p10['max_layer_height'], '0.75,0.75')
+        self.assertEqual(p10['min_layer_height'], '0.25,0.25')
+        self.assertEqual(p10['default_print_profile'],
+                         '0.50mm Balanced ★ @COREONEINDX HF1.0')
+        self.assertEqual(p10['retract_length'], p08['retract_length'])   # held
+
+    def test_filaments_are_08_rebound(self):
+        text = ini(VENDOR, INDX_COMMON, FILAMENTS_08)
+        f08 = sections(self.assertBuilds(self.run_tool('derive_filaments.py', text, '-n', '0.8')))
+        f10 = sections(self.assertBuilds(self.run_tool('derive_filaments.py', text, '-n', '1.0')))
+        a = f08['filament:Prusament PLA @COREONEINDX HF0.8']
+        b = f10['filament:Prusament PLA @COREONEINDX HF1.0']
+        self.assertEqual({k for k in set(a) | set(b) if a.get(k) != b.get(k)},
+                         {'compatible_printers_condition', 'filament_notes'})
+        self.assertIn('nozzle_diameter[0]==1.0', b['compatible_printers_condition'])
+        self.assertEqual(b['filament_max_volumetric_speed'], '42')   # 28 x 36/24, held
+        self.assertIn('M572 S0.013', b['start_filament_gcode'])       # Prusa's 0.8 PA, held
+        self.assertTrue(b['filament_notes'].startswith('"INDX 1.0 seed, held at HF0.8'))
+
+    # A PrusaResearch.ini that publishes anything at 1.0 must stop all three
+    # generators: the scaled values would otherwise ignore Prusa's own 1.0 data
+    # while every file still claimed Prusa publishes nothing at 1.0.
+    UNSOURCED_BREAKERS = {
+        'a 1.0 INDX common': '[print:*INDX_10hf_common*]\nperimeters = 2\n',
+        'a 1.0 PA section': '[filament:*C1INDX_PLA_10_PA*]\nstart_filament_gcode = "M572 S0.01"\n',
+        'a commented HF1.0 printer draft':
+            '; [printer:Prusa CORE One INDX 8T HF1.0 nozzle]\n; retract_length = 0.5\n',
+        # Prusa's sized family sections, which it adds before (or without) any
+        # concrete profile: *PLA06HFC1INDX*, *FLEX06PGC1INDX* and so on at 0.6.
+        'a 1.0 high-flow family': '[filament:*PLA10HFC1INDX*]\nfilament_wipe = 1\n',
+        'a 1.0 standard family': '[filament:*FLEX10PGC1INDX*]\nfilament_wipe = 1\n',
+        'a 1.0 INDX filament common': '[filament:*C1INDX_10_common*]\nfilament_wipe = 1\n',
+        'a CORE One 1.0 printer common': '[printer:*C1_10*]\nmax_layer_height = 0.75\n',
+    }
+
+    def test_every_generator_refuses_once_prusa_publishes_10(self):
+        cases = [('build_print_profiles.py', ini(VENDOR, print_common_08()), 'out.ini'),
+                 ('build_printer_preset.py', ini(VENDOR, PRINTERS_08), 'printer'),
+                 ('derive_filaments.py', ini(VENDOR, INDX_COMMON, FILAMENTS_08), 'out.ini')]
+        for what, extra in self.UNSOURCED_BREAKERS.items():
+            for tool, text, out in cases:
+                with self.subTest(tool=tool, source=what):
+                    r = self.run_tool(tool, text + '\n' + extra, '-n', '1.0', out=out)
+                    self.assertNotEqual(r.returncode, 0, r.stdout)
+                    self.assertIn('Prusa publishes', r.stderr)
+                    self.assertIn('nothing at 1.0 mm, but this PrusaResearch.ini does', r.stderr)
+                    written = (os.listdir(self.out) if os.path.isdir(self.out)
+                               else [self.out] if os.path.exists(self.out) else [])
+                    self.assertEqual(written, [], 'a refusal must write no output')
+
+
 if __name__ == '__main__':
     unittest.main()
