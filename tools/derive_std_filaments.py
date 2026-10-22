@@ -55,6 +55,15 @@ A material with no CORE One STD counterpart refuses: there is no STD parent to
 swap in, no MVS cap and no 0.25 compatibility to test. The only exceptions are
 the reviewed entries in STD_SKIP, each skipped with its reason in the report.
 
+The INDX toolchanger keys come in whole with the swapped-in base, so the base
+gets the per-nozzle common gate derive_filaments.py applies. Each preset must
+reach *C1INDX_common* through exactly one INDX STD base (a BASE_SWAP target) and
+no other route. The common that base stands on is found by structure, under any
+name; at 2.5.12 every one is *C1INDX_common* itself. A per-nozzle common Prusa
+puts there later (a *C1INDX_025_common*, say) may change only COMMON_ADOPT keys,
+each recorded with its reason in the header and filament_notes; any other key,
+a dropped shared key, or a toolchanger key set after the common refuses.
+
 Every number is Prusa's. Calibrate pressure advance and max volumetric speed
 before trusting them.
 
@@ -67,6 +76,8 @@ import re
 import sys
 
 from build_print_profiles import load, load_drafts, printer_models, resolve
+from derive_filaments import (COMMON, COMMON_ADOPT, common_delta, inherits, sized_common,
+                              parents as ancestors)
 from nozzles import STD_VALIDATED
 
 INDX_SUFFIX = ' @COREONEINDX HF0.4'
@@ -187,9 +198,78 @@ def tune_025(own, parents, hf, S, drafts):
     return []
 
 
-def derive(S, drafts, dia, skipped):
+def bypasses(S, key, base):
+    """Whether `key`'s chain reaches *C1INDX_common* other than through `base`."""
+    return any(p == COMMON or bypasses(S, 'filament:' + p, base)
+               for p in inherits(S, key) if p != base)
+
+
+def std_base(S, name, dia):
+    """The one INDX STD base (a BASE_SWAP target) through which preset `name`
+    reaches *C1INDX_common*. Refuses on none, on more than one, or on a second
+    route to the common around it, so no toolchanger value arrives ungated."""
+    key = 'filament:' + name
+    bases = sorted({p for p in ancestors(S, key) if p in BASE_SWAP[dia].values()})
+    if len(bases) != 1:
+        raise SystemExit('refusing: %s reaches %s through %s, not through exactly one '
+                         'INDX STD base (%s)' % (name, COMMON, ', '.join(bases) or 'nothing',
+                                                 ', '.join(sorted(set(BASE_SWAP[dia].values())))))
+    if bypasses(S, key, bases[0]):
+        raise SystemExit('refusing: %s also reaches %s other than through %s; review that '
+                         'route first' % (name, COMMON, bases[0]))
+    return bases[0]
+
+
+def after_base(S, name, base, generated=()):
+    """Refuse if anything that overrides the INDX STD base of preset `name` sets
+    an INDX toolchanger key (a *C1INDX_common* or COMMON_ADOPT key).
+
+    In PrusaSlicer's chain a later parent overrides an earlier one, and a
+    section's own body overrides all its parents. So on every level of the path
+    from the preset down to its base, a parent listed after the step toward the
+    base would replace the common's value, as would the own body of each wrapper
+    section the path passes through. None of these reaches the common, so
+    bypasses() lets them through, and they sit outside the base's own chain, so
+    sized_common() never sees them: the value would be emitted and credited as
+    the preset's own override. The preset's own body is exempt - that is its own
+    override by design - and so is the body of a preset this tool generated
+    earlier in the run (`generated`), whose body is likewise an INDX HF0.4
+    preset's own overrides, in Prusa's own chain."""
+    toolchanger = set(resolve(S, 'filament:' + COMMON)) | set(COMMON_ADOPT)
+
+    def walk(sec):
+        parents = inherits(S, 'filament:' + sec)
+        via = [i for i, p in enumerate(parents)
+               if p == base or base in ancestors(S, 'filament:' + p)]
+        if not via:
+            return
+        within = '' if sec == name else ' (within %s)' % sec
+        for p in parents[via[-1] + 1:]:
+            hit = sorted(set(resolve(S, 'filament:' + p)) & toolchanger)
+            if hit:
+                raise SystemExit('refusing: %s inherits %s after its INDX STD base %s%s, and %s '
+                                 'sets INDX toolchanger key(s) %s, which would override the '
+                                 'common; review it first'
+                                 % (name, p, base, within, p, ', '.join(hit)))
+        step = parents[via[-1]]
+        if step == base:
+            return
+        if step not in generated:
+            hit = sorted({k for k in S['filament:' + step] if k != 'inherits'} & toolchanger)
+            if hit:
+                raise SystemExit('refusing: %s reaches its INDX STD base %s through %s, whose '
+                                 'own body sets INDX toolchanger key(s) %s, which would '
+                                 'override the common; review it first'
+                                 % (name, base, step, ', '.join(hit)))
+        walk(step)
+
+    walk(name)
+
+
+def derive(S, drafts, dia, skipped, commons):
     """Yield (name, config, provenance) for every derivable preset at this size,
-    appending (material, reason) to `skipped` for each STD_SKIP entry met."""
+    appending (material, reason) to `skipped` for each STD_SKIP entry met.
+    `commons` collects per-nozzle common -> (delta, {key: (moved, kept)}, users)."""
     core_one_025 = resolve(S, 'printer:' + CORE_ONE_025) if dia == '0.25' else None
     built = {}
     for key in [k for k in S if k.startswith('filament:') and k.endswith(INDX_SUFFIX)]:
@@ -233,7 +313,26 @@ def derive(S, drafts, dia, skipped):
             how = 'parents %s' % '; '.join(parents)
 
         S['filament:' + name] = collections.OrderedDict(own, inherits='; '.join(parents))
+        base = std_base(S, name, dia)
+        after_base(S, name, base, built)
+        common_sec = sized_common(S, base)
+        if common_sec not in commons:
+            commons[common_sec] = (common_delta(S, common_sec), collections.OrderedDict(), [])
+        delta, creport, users = commons[common_sec]
+        users.append(mat)
         cfg = collections.OrderedDict(resolve(S, 'filament:' + name))
+        # The swapped-in base brought its common's values already; record them. A
+        # value that differs is an own override, kept as an own override always is.
+        common_notes = []
+        for k in sorted(delta):
+            c_moved, c_kept = creport.setdefault(k, ([], []))
+            v0, v1 = delta[k]
+            if cfg.get(k) == v1:
+                common_notes.append('%s %s -> %s' % (k, v0 or 'unset', v1))
+                c_moved.append(mat)
+            else:
+                common_notes.append('own %s %s kept over %s' % (k, cfg.get(k) or 'unset', v1))
+                c_kept.append('%s %s' % (mat, cfg.get(k) or 'unset'))
         caps = [hf['filament_max_volumetric_speed'], resolve(S, co_std)['filament_max_volumetric_speed']]
         if dia == '0.25':
             caps.append(cfg['filament_max_volumetric_speed'])
@@ -268,6 +367,8 @@ def derive(S, drafts, dia, skipped):
         if released:
             provenance += (' Released to the printer preset (no swapped-in INDX base '
                            'defines them): %s.' % ', '.join(released))
+        if common_notes:
+            provenance += ' %s: %s.' % (common_sec, '; '.join(common_notes))
         notes = cfg.get('filament_notes', '""').strip('"')
         cfg['filament_notes'] = '"%s"' % ((notes + '\\n' if notes else '') + provenance)
         built[name] = cfg
@@ -293,9 +394,11 @@ def main():
            '# Calibrate pressure advance and MVS before trusting them.']
     if not STD_VALIDATED.get(dia, False):
         out.append('# UNVALIDATED: not yet test printed on a standard %s mm INDX nozzle.' % dia)
+    header_end = len(out)  # the per-nozzle common's block goes here, once counted
     out.append('')
     report, skipped = [], []
-    for name, cfg, row in derive(S, drafts, dia, skipped):
+    commons = collections.OrderedDict()
+    for name, cfg, row in derive(S, drafts, dia, skipped, commons):
         out.append('[filament:%s]' % name)
         for k in sorted(cfg):
             out.append('%s = %s' % (k, cfg[k]))
@@ -303,6 +406,20 @@ def main():
         report.append(row)
     if not report:
         sys.exit('no INDX filament profiles derivable at %s mm' % dia)
+
+    block = []
+    for common_sec, (delta, creport, users) in commons.items():
+        if not delta:
+            continue
+        block += ['#', '# From Prusa\'s per-nozzle INDX common %s, which the swapped-in INDX'
+                  % common_sec, '# STD bases stand on in place of %s (COMMON_ADOPT):' % COMMON]
+        for k, (moved, kept) in creport.items():
+            v0, v1 = delta[k]
+            block.append('#   %s: %s -> %s, on %d of %d presets%s'
+                         % (k, v0 or 'unset', v1, len(moved), len(users),
+                            '; the rest keep their own value' if kept else ''))
+            block.append('#       %s' % COMMON_ADOPT[k])
+    out[header_end:header_end] = block
 
     with open(args.out, 'w', encoding='utf-8') as f:
         f.write('\n'.join(out))
@@ -314,6 +431,17 @@ def main():
         print('%-*s %7s %7s  %s; %s' % (w, mat, a, b, how, pa))
     for mat, why in skipped:
         print('%-*s %7s %7s  skipped (STD_SKIP): %s' % (w, mat, '-', '-', why))
+    for common_sec, (delta, creport, users) in commons.items():
+        if not delta:
+            continue
+        print('\nPer-nozzle INDX common %s, over %s (%d presets):'
+              % (common_sec, COMMON, len(users)))
+        for k, (moved, kept) in creport.items():
+            v0, v1 = delta[k]
+            print('  %s %s -> %s on %d presets' % (k, v0 or 'unset', v1, len(moved)))
+            print('    reason: %s' % COMMON_ADOPT[k])
+            if kept:
+                print('    own value kept: %s' % ', '.join(kept))
     print('\n%d presets -> %s' % (len(report), args.out))
     if not STD_VALIDATED.get(dia, False):
         print('!! UNVALIDATED: not yet test printed on a standard %s mm nozzle' % dia)
