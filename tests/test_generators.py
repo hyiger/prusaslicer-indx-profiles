@@ -655,3 +655,309 @@ class ScaledSize(Tool):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# --- mixed tool layouts: nozzles.py LAYOUTS ---------------------------------
+
+PRINT_025 = '''
+[print:*INDX_025_common*]
+compatible_printers_condition = printer_model=~/(COREONE_INDX8T|COREONE_INDX4T)/ and nozzle_diameter[0]==0.25
+output_filename_format = {input_filename_base}_0.25n_{layer_height}mm.gcode
+extrusion_width = 0.27
+perimeter_extrusion_width = 0.25
+external_perimeter_extrusion_width = 0.25
+infill_extrusion_width = 0.27
+solid_infill_extrusion_width = 0.27
+top_infill_extrusion_width = 0.25
+support_material_extrusion_width = 0.25
+perimeter_speed = 150
+infill_speed = 100
+solid_infill_speed = 140
+support_material_speed = 70
+layer_height = 0.1
+infill_every_layers = 1
+support_material = 1
+support_material_style = snug
+support_material_extruder = 0
+support_material_interface_extruder = 0
+perimeter_extruder = 1
+infill_extruder = 1
+solid_infill_extruder = 1
+top_solid_layers = 11
+bottom_solid_layers = 8
+
+[print:0.07mm Extra Fine @COREONEINDX 0.25]
+inherits = *INDX_025_common*
+layer_height = 0.07
+top_solid_layers = 11
+bottom_solid_layers = 9
+
+[print:0.10mm Fine ★ @COREONEINDX 0.25]
+inherits = *INDX_025_common*
+layer_height = 0.1
+top_solid_layers = 9
+bottom_solid_layers = 7
+
+[print:0.15mm Detail @COREONEINDX 0.25]
+inherits = *INDX_025_common*
+layer_height = 0.15
+top_solid_layers = 6
+bottom_solid_layers = 5
+'''
+
+ANCHOR_HF04 = '''
+[print:0.20mm Balanced ★ @COREONEINDX HF0.4]
+compatible_printers_condition = %s
+layer_height = 0.2
+infill_extrusion_width = 0.45
+infill_speed = 300
+''' % COND_HF04
+
+
+def indx_8t(extra='', tools=8, semm='0', check=True):
+    """A shipping INDX base with `tools` tools, and Prusa's per-tool nozzle
+    check in its start G-code."""
+    vec = lambda v: ','.join([v] * tools)
+    gcode = '\\n'.join(
+        '{if (is_extruder_used[%d])}M862.1 T%d P{nozzle_diameter[%d]} '
+        'F{(nozzle_high_flow[%d] ? 1 : 0)}{endif}' % (n, n, n, n)
+        for n in range(tools)) if check else 'M862.1 P{nozzle_diameter[0]}'
+    return '''
+    [printer:Prusa CORE One INDX 8T HF0.4 nozzle]
+    printer_model = COREONE_INDX8T
+    single_extruder_multi_material = %s
+    nozzle_diameter = %s
+    nozzle_high_flow = %s
+    min_layer_height = %s
+    max_layer_height = %s
+    retract_length = %s
+    machine_max_jerk_x = 10,8
+    start_gcode = %s
+    default_print_profile = 0.20mm Balanced ★ @COREONEINDX HF0.4
+    default_filament_profile = "Prusament PLA @COREONEINDX HF0.4"
+    %s
+    ''' % (semm, vec('0.4'), vec('1'), vec('0.07'), vec('0.3'), vec('0.8'),
+           gcode, extra)
+
+
+DRAFT_025 = '''
+; [printer:Prusa CORE One INDX 8T 0.25 nozzle]
+; inherits = Prusa CORE One INDX 8T HF0.4 nozzle
+; nozzle_diameter = 0.25,0.25,0.25,0.25,0.25,0.25,0.25,0.25
+; nozzle_high_flow = 0,0,0,0,0,0,0,0
+; min_layer_height = 0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05
+; max_layer_height = 0.15,0.15,0.15,0.15,0.15,0.15,0.15,0.15
+; retract_length = 0.7,0.7,0.7,0.7,0.7,0.7,0.7,0.7
+'''
+
+
+class LayoutPrintProfiles(Tool):
+    """build_print_profiles.py --layout"""
+
+    def build(self, *sections):
+        return self.assertBuilds(self.run_tool(
+            'build_print_profiles.py', ini(*sections), '--layout', '0.25+HF0.4'))
+
+    def test_prusa_tiers_are_renamed_rebound_and_split(self):
+        out = self.build(VENDOR, PRINT_025, ANCHOR_HF04)
+        # Prusa's own three layer heights, this repo's tier labels: sharing an
+        # alias with Prusa's own 0.25 profiles would hide these behind them.
+        for name in ('0.07mm Detail @COREONEINDX 0.25+HF0.4',
+                     '0.10mm Balanced ★ @COREONEINDX 0.25+HF0.4',
+                     '0.15mm Draft @COREONEINDX 0.25+HF0.4'):
+            self.assertIn('[print:%s]' % name, out)
+        self.assertNotIn('Extra Fine @COREONEINDX 0.25+HF0.4', out)
+        # Binds on both pinned tools, by index, and on the high-flow flag of each.
+        self.assertIn('compatible_printers_condition = printer_model=~/'
+                      '(COREONE_INDX8T|COREONE_INDX4T)/ and nozzle_diameter[0]==0.25 '
+                      'and ! nozzle_high_flow[0] and nozzle_diameter[1]==0.4 and '
+                      'nozzle_high_flow[1]', out)
+        self.assertIn('output_filename_format = {input_filename_base}_0.25+HF0.4n_', out)
+        # Roles pinned; supports organic, which is what lets a pinned support
+        # extruder coexist with the wipe tower.
+        self.assertIn('infill_extruder = 2', out)
+        self.assertIn('perimeter_extruder = 1', out)
+        self.assertIn('solid_infill_extruder = 1', out)
+        self.assertIn('support_material_extruder = 1', out)
+        self.assertIn('support_material_interface_extruder = 1', out)
+        self.assertIn('support_material_style = organic', out)
+        # The moved role takes tool 2's own width; nothing else moves.
+        self.assertIn('infill_extrusion_width = 0.45', out)
+        self.assertIn('solid_infill_extrusion_width = 0.27', out)
+        self.assertIn('perimeter_extrusion_width = 0.25', out)
+        self.assertIn('perimeter_speed = 150', out)
+        # Prusa's per-tier solid-layer counts survive the split.
+        self.assertRegex(out, r'top_solid_layers = 11')
+        self.assertRegex(out, r'bottom_solid_layers = 5')
+
+    def test_infill_is_combined_and_the_speed_solved_to_prusa_s_rate(self):
+        out = self.build(VENDOR, PRINT_025, ANCHOR_HF04)
+        tiers = dict(sections(out))
+        # 0.25 mm of combined height is all PrusaSlicer allows here: solid infill
+        # is on the 0.25 tool, and the cap is the smaller of the two nozzles.
+        self.assertEqual(tiers['print:0.07mm Detail @COREONEINDX 0.25+HF0.4']
+                         ['infill_every_layers'], '3')
+        self.assertEqual(tiers['print:0.10mm Balanced ★ @COREONEINDX 0.25+HF0.4']
+                         ['infill_every_layers'], '2')
+        self.assertEqual(tiers['print:0.15mm Draft @COREONEINDX 0.25+HF0.4']
+                         ['infill_every_layers'], '1')
+        # Prusa's own HF0.4 infill rate is 0.45 x 0.2 at 300 mm/s = 24.4 mm3/s.
+        # Solved at 0.45 x (n x layer), and never past Prusa's own 300 mm/s.
+        self.assertEqual(tiers['print:0.07mm Detail @COREONEINDX 0.25+HF0.4']
+                         ['infill_speed'], '285')
+        self.assertEqual(tiers['print:0.10mm Balanced ★ @COREONEINDX 0.25+HF0.4']
+                         ['infill_speed'], '300')
+        self.assertEqual(tiers['print:0.15mm Draft @COREONEINDX 0.25+HF0.4']
+                         ['infill_speed'], '300')
+
+    def test_every_change_carries_a_reason(self):
+        out = self.build(VENDOR, PRINT_025, ANCHOR_HF04)
+        header = out[:out.index('[print:*COREONEINDX')]
+        for needle in ('Preset.cpp:1388-1401',      # why the tiers are renamed
+                       'Print.cpp:685-692',          # why supports are organic
+                       'PrintObject.cpp:3126-3132',  # why infill combines this far
+                       'PlaceholderParser.cpp:1074'):  # why a tool-2 clause is safe
+            self.assertIn(needle, header)
+
+    def test_refuses_a_tier_count_mismatch(self):
+        text = ini(VENDOR, PRINT_025, ANCHOR_HF04,
+                   '''
+                   [print:0.20mm Rough @COREONEINDX 0.25]
+                   inherits = *INDX_025_common*
+                   layer_height = 0.2
+                   ''')
+        self.assertRefuses(
+            self.run_tool('build_print_profiles.py', text, '--layout', '0.25+HF0.4'),
+            'Prusa ships 4 "@COREONEINDX 0.25" print profiles',
+            'human decision')
+
+    def test_refuses_without_the_moved_role_s_anchor(self):
+        self.assertRefuses(
+            self.run_tool('build_print_profiles.py', ini(VENDOR, PRINT_025),
+                          '--layout', '0.25+HF0.4'),
+            'ROLE_ANCHOR names [print:0.20mm Balanced ★ @COREONEINDX HF0.4]')
+
+    def test_refuses_an_unsolvable_anchor_width(self):
+        text = ini(VENDOR, PRINT_025,
+                   ANCHOR_HF04.replace('infill_extrusion_width = 0.45',
+                                       'infill_extrusion_width = 112%'))
+        self.assertRefuses(
+            self.run_tool('build_print_profiles.py', text, '--layout', '0.25+HF0.4'),
+            'not an absolute value')
+
+
+class LayoutPrinterPreset(Tool):
+    """build_printer_preset.py --layout"""
+
+    NAME = 'Prusa CORE One INDX 8T 0.25+HF0.4 nozzles.ini'
+
+    def run_layout(self, *sections):
+        return self.run_tool('build_printer_preset.py', ini(*sections),
+                             '--layout', '0.25+HF0.4', out='printer')
+
+    def build(self, *sections):
+        result = self.run_layout(*sections)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(os.path.join(self.out, self.NAME), encoding='utf-8') as f:
+            return f.read()
+
+    def assertLayoutRefuses(self, result, *needles):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('refusing:', result.stderr)
+        for needle in needles:
+            self.assertIn(needle, result.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.out, self.NAME)),
+                         'a refusal must write no preset')
+
+    def base(self, **kw):
+        return ini(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025, indx_8t(**kw),
+                   DRAFT_025)
+
+    def test_per_extruder_keys_are_composed_tool_by_tool(self):
+        out = self.build(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025,
+                         indx_8t(), DRAFT_025)
+        self.assertIn('nozzle_diameter = 0.25,0.4,0.4,0.4,0.4,0.4,0.4,0.4', out)
+        self.assertIn('nozzle_high_flow = 0,1,1,1,1,1,1,1', out)
+        self.assertIn('min_layer_height = 0.05,0.07,0.07,0.07,0.07,0.07,0.07,0.07', out)
+        self.assertIn('max_layer_height = 0.15,0.3,0.3,0.3,0.3,0.3,0.3,0.3', out)
+        self.assertIn('retract_length = 0.7,0.8,0.8,0.8,0.8,0.8,0.8,0.8', out)
+        # Printer-wide decisions, including a pointer at the layout's own Balanced
+        # profile rather than at one nozzle's.
+        self.assertIn('printer_variant = 0.25+HF0.4', out)
+        self.assertIn('default_print_profile = 0.10mm Balanced ★ @COREONEINDX '
+                      '0.25+HF0.4', out)
+        self.assertIn('default_filament_profile = "Prusament PLA @COREONEINDX 0.25"',
+                      out)
+        self.assertIn('inherits = Prusa CORE One INDX 8T HF0.4 nozzle', out)
+        self.assertNotIn('renamed_from', out)
+        self.assertIn('UNVALIDATED: this layout has not been test printed.', out)
+
+    def test_refuses_a_printer_wide_disagreement(self):
+        # A draft key that is not per-extruder: the two nozzles would be claiming
+        # different machine limits.
+        self.assertLayoutRefuses(
+            self.run_layout(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025, indx_8t(),
+                            DRAFT_025 + '; machine_max_jerk_x = 9,9\n'),
+            'disagree on keys a layout may not vary',
+            'machine_max_jerk_x', 'MIXED_SCALAR')
+
+    def test_refuses_single_extruder_multi_material(self):
+        self.assertLayoutRefuses(
+            self.run_layout(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025,
+                            indx_8t(semm='1'), DRAFT_025),
+            'single_extruder_multi_material = 1', 'Preset.cpp:2405')
+
+    def test_refuses_without_a_per_tool_firmware_nozzle_check(self):
+        self.assertLayoutRefuses(
+            self.run_layout(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025,
+                            indx_8t(check=False), DRAFT_025),
+            'does not check tool 1, 2, 3, 4, 5, 6, 7, 8 with its own',
+            'must\n          not be written')
+
+    def test_refuses_a_tool_count_mismatch(self):
+        self.assertLayoutRefuses(
+            self.run_layout(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025,
+                            indx_8t(tools=4), DRAFT_025),
+            'has 4 tools but layout 0.25+HF0.4 names 8')
+
+
+class LayoutTableGuards(unittest.TestCase):
+    """nozzles.py LAYOUTS entries, checked in process: these guard the table
+    itself, so no PrusaResearch.ini can reach them."""
+
+    def setUp(self):
+        sys.path.insert(0, TOOLS)
+        self.addCleanup(lambda: sys.path.remove(TOOLS))
+        import nozzles
+        import build_print_profiles
+        self.nozzles, self.build = nozzles, build_print_profiles
+
+    def test_every_role_must_be_pinned(self):
+        layout = self.nozzles.LAYOUTS['0.25+HF0.4']
+        saved = dict(layout.roles)
+        self.addCleanup(lambda: layout.roles.update(saved))
+        del layout.roles['support_material_extruder']
+        with self.assertRaises(SystemExit) as caught:
+            self.build.build_layout({}, layout, [], [])
+        self.assertIn('leaves support_material_extruder unpinned', str(caught.exception))
+
+    def test_an_unknown_role_is_refused(self):
+        layout = self.nozzles.LAYOUTS['0.25+HF0.4']
+        self.addCleanup(lambda: layout.roles.pop('brim_extruder', None))
+        layout.roles['brim_extruder'] = 1
+        with self.assertRaises(SystemExit) as caught:
+            self.build.build_layout({}, layout, [], [])
+        self.assertIn('not a role in ROLE_KEYS', str(caught.exception))
+
+    def test_a_role_on_a_tool_the_layout_does_not_have(self):
+        layout = self.nozzles.LAYOUTS['0.25+HF0.4']
+        with self.assertRaises(SystemExit) as caught:
+            layout.tool_tag(len(layout.tools) + 1)
+        self.assertIn('to pin a role to', str(caught.exception))
+
+    def test_combining_is_capped_by_the_smaller_nozzle(self):
+        # Solid infill on the 0.25 tool caps combining at 0.25 mm, not 0.4.
+        layout = self.nozzles.LAYOUTS['0.25+HF0.4']
+        self.assertAlmostEqual(self.build.combine_cap(layout), 0.25)
+        self.assertEqual([self.nozzles.combine_layers(0.25, h)
+                          for h in (0.07, 0.1, 0.15)], [3, 2, 1])
