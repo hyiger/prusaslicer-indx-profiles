@@ -29,7 +29,7 @@ size-specific common. Where `flow` is None the generator leaves the upstream
 speeds alone; where it is set, the six main speeds are solved backward from it.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 
 
 # PrusaSlicer Flow::mm3_per_mm for a non-bridge extrusion.
@@ -262,4 +262,212 @@ COMMON_EDITS = {
     'print_settings_id': ('', 'system preset hygiene'),
     'notes': ('', 'system preset hygiene'),
     'compatible_printers': ('', 'condition-based binding only'),
+}
+
+
+# --- MIXED TOOL LAYOUTS ------------------------------------------------------
+# Prusa's own "experimental printing with different nozzle diameters" workflow
+# (help.prusa3d.com article 821176), applied to the INDX: one toolchanger with
+# different nozzles on different tools, roles split between them.
+#
+# Nothing is invented here either. A layout composes presets this repo already
+# builds for each nozzle on its own, and PrusaSlicer decides, per role, which
+# tool's nozzle a width or speed belongs to:
+#
+#   * PrintRegion::flow (PrintRegion.cpp:63, version_2.9.6) takes the nozzle
+#     diameter of the extruder assigned to the role being extruded. So once a
+#     role is pinned to one tool, every per-role width and speed key belongs to
+#     exactly one nozzle, and can be taken from that nozzle's own Prusa source.
+#     That is why the widths stay explicit instead of being zeroed to "auto" as
+#     Prusa's article suggests: auto would recompute them as 1.125 x nozzle
+#     (Flow::auto_extrusion_width, Flow.cpp:33) and throw away Prusa's own
+#     tuned figures.
+#   * ExtruderFilaments::update_compatible_internal (Preset.cpp:2404-2415)
+#     copies every per-extruder key's value at tool N into index 0 before
+#     evaluating a filament's compatible_printers_condition, whenever
+#     single_extruder_multi_material is 0 - which the INDX sets. So each tool's
+#     filament list filters on its own nozzle and the filament bundles in this
+#     repo need no change at all for a mixed layout.
+#   * Print presets get no such adjustment (Preset.cpp:1352-1368): they are
+#     evaluated against the printer as written, so a layout's print profiles
+#     bind on the tools by index, which is what BIND below does. An index past
+#     the end of a vector reads element 0 rather than throwing
+#     (PlaceholderParser.cpp:1074), so testing tool 2 is safe on any printer.
+#
+# A layout is always validated=False until printed: the composition is sourced,
+# but no mixed-nozzle INDX print has been made here.
+
+# PrusaSlicer's own per-extruder keys: PrintConfigDef::init_extruder_option_keys
+# (PrintConfig.cpp:4124-4131, version_2.9.6). These are the only printer keys a
+# layout may vary from tool to tool; any other key that differs between two
+# tools' presets is printer-wide and needs a human decision (MIXED_SCALAR in
+# build_printer_preset.py).
+EXTRUDER_KEYS = frozenset("""
+    nozzle_diameter min_layer_height max_layer_height extruder_offset
+    retract_length retract_lift retract_lift_above retract_lift_below
+    retract_speed deretract_speed retract_before_wipe retract_restart_extra
+    retract_before_travel wipe travel_slope travel_max_lift
+    travel_ramping_lift travel_lift_before_obstacle retract_layer_change
+    retract_length_toolchange retract_restart_extra_toolchange extruder_colour
+    default_filament_profile nozzle_high_flow
+""".split())
+
+# Print roles PrusaSlicer can pin to a tool, and the width and speed keys that
+# follow each one. The mapping is PrintRegion::extruder (PrintRegion.cpp:22-35)
+# and PrintRegion::flow (PrintRegion.cpp:38-65): gap fill rides the perimeter
+# flow, bridges and top surfaces ride the solid-infill flow. A role left on
+# Prusa's 0 ("current extruder") is not pinned and its keys stay at the base
+# tool's values, which is why a layout must pin every role whose tool it means
+# to change.
+ROLE_KEYS = {
+    'perimeter_extruder': ('perimeter_extrusion_width',
+                           'external_perimeter_extrusion_width',
+                           'perimeter_speed', 'external_perimeter_speed',
+                           'small_perimeter_speed', 'gap_fill_speed'),
+    'infill_extruder': ('infill_extrusion_width', 'infill_speed'),
+    'solid_infill_extruder': ('solid_infill_extrusion_width',
+                              'top_infill_extrusion_width',
+                              'solid_infill_speed', 'top_solid_infill_speed',
+                              'bridge_speed'),
+    'support_material_extruder': ('support_material_extrusion_width',
+                                  'support_material_speed'),
+    'support_material_interface_extruder': (),
+}
+
+# Where a role moved onto another tool takes its width and its volumetric rate
+# from: a print profile Prusa itself ships at that nozzle, which carries a
+# width, a layer height and a speed together. The width transfers as written;
+# the speed is re-solved so the rate matches Prusa's at the layout's own
+# geometry (solve_role() in build_print_profiles.py), because the layer height
+# is the base tool's, not this profile's.
+ROLE_ANCHOR = {
+    'HF0.4': ('0.20mm Balanced \u2605 @COREONEINDX HF0.4',
+              "Prusa's own starred INDX HF0.4 profile, and the same anchor the "
+              'flow targets above are measured against: 20.4 mm3/s perimeter, '
+              '24.4 infill'),
+}
+
+
+class Layout:
+    """One INDX toolchanger with different nozzles on different tools.
+
+    `tools` names the nozzle fitted to each tool, in tool order, exactly as the
+    printer presets name their variants: '0.25' for a standard nozzle, 'HF0.4'
+    for a high-flow one. Tool 1 is PrusaSlicer's Extruder 1, vector index 0.
+
+    `roles` pins print roles to 1-based tools. Every role the layout means to
+    move must be listed: PrusaSlicer's own 0 means "whichever tool is loaded",
+    which makes the role's nozzle - and so its widths and speeds - unknowable,
+    and raises _SUPPORT_NOZZLE_DIAMETER_DIFFER for supports (Print.cpp:675-679).
+
+    `extra` holds the layout's own print-key decisions, {key: (value, reason)},
+    the same shape as COMMON_EDITS.
+    """
+
+    def __init__(self, key, model, tools, roles, note, extra=None,
+                 validated=False):
+        self.key = key              # '0.25+HF0.4', the preset-name tag
+        self.model = model          # INDX model the tool count belongs to
+        self.tools = tuple(tools)   # per-tool variant tags, tool 1 first
+        self.roles = dict(roles)    # print role -> 1-based tool
+        self.note = note
+        self.extra = dict(extra or {})
+        self.validated = validated  # test printed as a mixed layout?
+
+    @property
+    def tag(self):
+        return self.key
+
+    @property
+    def hidden_common(self):
+        return '*COREONEINDX %s*' % self.key
+
+    @property
+    def base_tool(self):
+        """The tool whose print common the profiles are built on: the one that
+        prints perimeters, since that is what sets a profile's layer ladder and
+        its surface quality."""
+        return self.roles['perimeter_extruder']
+
+    def tool_tag(self, pos):
+        """The variant tag fitted to 1-based tool `pos`."""
+        if not 1 <= pos <= len(self.tools):
+            raise SystemExit('refusing: layout %s has %d tools, so there is no '
+                             'tool %d to pin a role to' % (self.key, len(self.tools), pos))
+        return self.tools[pos - 1]
+
+    def dia(self, pos):
+        return split_tag(self.tool_tag(pos))[0]
+
+    def high_flow(self, pos):
+        return split_tag(self.tool_tag(pos))[1]
+
+    @property
+    def pinned_tools(self):
+        """Tools the profiles actually assign a role to, in order. These are the
+        tools the binding tests: a layout says nothing about a tool it never
+        prints with, so requiring a particular nozzle there would only make the
+        profiles vanish when a spare dock is changed."""
+        return sorted(set(self.roles.values()))
+
+
+def split_tag(tag):
+    """'HF0.4' -> ('0.4', True); '0.25' -> ('0.25', False)."""
+    return (tag[2:], True) if tag.startswith('HF') else (tag, False)
+
+
+def tool_runs(values, label=lambda v: v):
+    """Per-tool values as runs: ['a','b','b'] -> 'tool 1 a, tools 2-3 b'."""
+    out, start = [], 0
+    for i in range(1, len(values) + 1):
+        if i == len(values) or values[i] != values[start]:
+            out.append('tool %d %s' % (start + 1, label(values[start]))
+                       if i - start == 1 else
+                       'tools %d-%d %s' % (start + 1, i, label(values[start])))
+            start = i
+    return ', '.join(out)
+
+
+def combine_layers(cap, layer):
+    """How many layers of sparse infill PrusaSlicer will combine at this layer
+    height, given `cap` mm of combined height.
+
+    PrintObject::combine_infill (PrintObject.cpp:3126-3132) caps the combined
+    height at the smaller of the infill and solid-infill extruders' nozzle
+    diameters, so a layout that keeps solid infill on the small nozzle is
+    capped by the small nozzle however large the infill one is. 1 means no
+    combining, which is what PrusaSlicer does below 2.
+    """
+    n = int((Decimal(str(cap)) / Decimal(str(layer))).to_integral_value(
+        rounding=ROUND_FLOOR))
+    return max(1, n)
+
+
+# 0.25 mm standard nozzle on tool 1, 0.4 mm high-flow CHT on tools 2-8, which is
+# Prusa's article worked through on an INDX 8T. Perimeters, solid infill, top
+# surfaces and supports stay on the 0.25 for surface quality; sparse infill goes
+# to the CHT, which is the one role where a 0.4 high-flow nozzle can pay for the
+# tool changes. Layer ladder, and every key not listed in ROLE_KEYS for a moved
+# role, are the 0.25 nozzle's.
+LAYOUTS = {
+    '0.25+HF0.4': Layout(
+        '0.25+HF0.4', '8T', ('0.25',) + ('HF0.4',) * 7,
+        roles={'perimeter_extruder': 1,
+               'infill_extruder': 2,
+               'solid_infill_extruder': 1,
+               'support_material_extruder': 1,
+               'support_material_interface_extruder': 1},
+        extra={
+            'support_material_style': (
+                'organic',
+                'required, not preference: with a wipe tower and non-soluble '
+                'supports, Print.cpp:685-692 rejects the slice outright unless '
+                'the support style is organic once a support extruder is pinned '
+                '(both support extruders must otherwise be 0). Pinning them is '
+                'what keeps support width off the smaller nozzle and silences '
+                '_SUPPORT_NOZZLE_DIAMETER_DIFFER (Print.cpp:675-679). Prusa\'s '
+                'article prescribes the same pair of changes'),
+        },
+        note='mixed layout: composed from the 0.25 and HF0.4 presets this repo '
+             'already builds, but no mixed-nozzle print has been made'),
 }

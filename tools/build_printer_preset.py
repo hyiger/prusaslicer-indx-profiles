@@ -57,16 +57,26 @@ check, `filament_type[N]=~/(PET|CPE|PCTG)/`, must match the whole type, so it
 never matches PETG, the type of every PET-family INDX filament Prusa ships.
 Reported as prusa3d/PrusaSlicer-settings-prusa-fff#50.
 
+--layout builds a mixed tool layout instead: different nozzles on different
+tools, composed from the single-nozzle presets above tool by tool. Only
+PrusaSlicer's own per-extruder keys may differ between tools; anything else the
+two nozzles' presets disagree on stops the build. See nozzles.py, MIXED TOOL
+LAYOUTS.
+
     python3 build_printer_preset.py PrusaResearch.ini printer/ -n 0.6
     python3 build_printer_preset.py PrusaResearch.ini printer/ -n 0.6 -m 4T
     python3 build_printer_preset.py PrusaResearch.ini printer/ -n 0.4 -n 0.25 --std
 """
 import argparse
 import os
+import re
 import sys
+import textwrap
 
-from build_print_profiles import assert_unsourced, load, load_drafts, resolve
-from nozzles import NOZZLES, STD_VALIDATED, TIERS, scale
+from build_print_profiles import (assert_unsourced, layout_balanced_profile,
+                                  load, load_drafts, resolve)
+from nozzles import (EXTRUDER_KEYS, LAYOUTS, NOZZLES, STD_VALIDATED, TIERS,
+                     scale, split_tag, tool_runs)
 
 BYLINE = 'hyiger'
 
@@ -78,6 +88,7 @@ MODELS = {
 
 # The reference pair. Prusa ships CORE One HF0.4/0.5/0.6/0.8 only, which is why
 # 0.25 and 0.3 refuse here exactly as they do in derive_filaments.py.
+REF_DIA = '0.4'
 REF_BASE = 'Prusa CORE One HF0.4 nozzle'
 REF_FMT = 'Prusa CORE One HF%s nozzle'
 
@@ -436,24 +447,221 @@ def build_std(vendor, drafts, dia, model, report):
     return cfg, changed
 
 
-def emit(path, cfg, changed, dia, model, validated, kind='high flow', note=None,
-         version='?'):
+# --- mixed tool layouts ------------------------------------------------------
+# Prusa's "experimental printing with different nozzle diameters" workflow
+# (help.prusa3d.com article 821176) on an INDX. A layout preset is composed, not
+# derived: each tool's nozzle already has a preset here, built from Prusa's own
+# sources, and the layout interleaves them tool by tool. Only PrusaSlicer's own
+# per-extruder keys may vary that way (nozzles.py, EXTRUDER_KEYS, from
+# PrintConfigDef::init_extruder_option_keys); any other key the two nozzles'
+# presets disagree on describes the machine rather than a nozzle, and stops the
+# build unless MIXED_SCALAR says what to do with it.
+
+# The handful of keys a layout decides once for the whole printer.
+MIXED_SCALAR = {
+    'printer_variant': 'names the layout, not one nozzle. Nothing binds on it: '
+                       'PrusaSlicer checks a variant only for system presets in '
+                       'a vendor bundle (PresetBundle.cpp:1642-1659), and '
+                       'Preset::set_visible_from_appconfig returns early for a '
+                       'preset with no vendor of its own (Preset.cpp:425), which '
+                       'is every user preset here - as the 0.25 and 0.4 presets, '
+                       'whose tags Prusa does not declare either, already show',
+    'default_print_profile': 'INDX pointer, retargeted to the Balanced profile '
+                             'this layout emits',
+    'default_filament_profile': 'the base tool\'s. PrusaSlicer reads index 0 '
+                                'only: ExtruderFilaments::update_compatible_'
+                                'internal skips this one key when it shifts a '
+                                'tool\'s per-extruder values into index 0 '
+                                '(Preset.cpp:2407-2409), so a per-tool vector '
+                                'here would be written and never read',
+    'inherits': 'the shipping HF0.4 preset, as in every preset here: it carries '
+                'no values into a flattened file, but it is how a user preset '
+                'gets a vendor, and so how Prusa\'s own print and filament '
+                'presets stay on offer',
+}
+
+
+def one_or_all(value):
+    """A per-tool vector's single value, or the whole vector when the tools
+    differ: a header must not show tool 1's value as if it were the printer's."""
+    one = uniform(value)
+    return value if one is None else one
+
+
+def preset_for_tag(vendor, drafts, tag, model, report):
+    """The preset this repo builds for one tool's nozzle on its own.
+
+    HF0.4 is the shipping base itself, which needs no derivation - only the
+    dock-fan fix every preset here carries.
+    """
+    dia, high_flow = split_tag(tag)
+    _printer_model, base_name = MODELS[model]
+    if tag == 'HF' + REF_DIA:
+        cfg = dict(resolve(vendor, 'printer:' + base_name))
+        cfg.pop('renamed_from', None)
+        changed = []
+        fix_dock_fan(cfg, changed, report)
+        cfg['inherits'] = base_name
+        return cfg
+    if high_flow:
+        return build(vendor, drafts, dia, model, report)[0]
+    return build_std(vendor, drafts, dia, model, report)[0]
+
+
+def assert_per_tool_nozzle_check(cfg, layout):
+    """Prusa's INDX start G-code asks the firmware to verify each used tool's
+    own nozzle - `M862.1 T<n> P{nozzle_diameter[<n>]} ... F{nozzle_high_flow[<n>]}`
+    per tool. That per-tool check is what makes a mixed layout safe to send to
+    the printer at all: the firmware refuses the print if a dock holds something
+    other than what the G-code was sliced for. If a re-pin ever collapses it to
+    one tool, a mixed preset must not be written."""
+    # An INI stores newlines as the two characters \ and n, so split on that
+    # rather than trusting a regex not to run past the end of a line.
+    lines = cfg.get('start_gcode', '').split('\\n')
+    missing = [n + 1 for n in range(len(layout.tools))
+               if not any(re.search(r'M862\.1\s+T%d\s+P\{nozzle_diameter\[%d\]\}'
+                                    % (n, n), line)
+                          and 'nozzle_high_flow[%d]' % n in line for line in lines)]
+    if missing:
+        raise SystemExit(
+            'refusing: Prusa\'s start G-code does not check tool %s with its own\n'
+            '          M862.1 T<n> P{nozzle_diameter[<n>]} ... '
+            '{nozzle_high_flow[<n>]}.\n'
+            '          Without a per-tool check the firmware cannot tell that a '
+            'mixed\n          layout is fitted the way the G-code assumes, so this '
+            'preset must\n          not be written.'
+            % ', '.join(str(n) for n in missing))
+
+
+def build_mixed(vendor, drafts, layout, model, report):
+    """One printer preset for a mixed tool layout."""
+    if model != layout.model:
+        raise SystemExit('refusing: layout %s is an INDX %s layout (%d tools), '
+                         'not %s' % (layout.key, layout.model,
+                                     len(layout.tools), model))
+    printer_model, base_name = MODELS[model]
+    ref = dict(resolve(vendor, 'printer:' + base_name))
+    ref.pop('renamed_from', None)
+    tools = len(ref['nozzle_diameter'].split(','))
+    if tools != len(layout.tools):
+        raise SystemExit('refusing: %s has %d tools but layout %s names %d'
+                         % (base_name, tools, layout.key, len(layout.tools)))
+
+    per_tag = {}
+    for tag in dict.fromkeys(layout.tools):
+        sub = []
+        per_tag[tag] = preset_for_tag(vendor, drafts, tag, model, sub)
+        report += ['  tool nozzle %s: %s' % (tag, line.strip()) for line in sub]
+    tool_cfgs = [per_tag[t] for t in layout.tools]
+
+    cfg, composed, unexpected = {}, {}, []
+    for key in sorted(set().union(*(set(c) for c in tool_cfgs))):
+        vals = [c.get(key) for c in tool_cfgs]
+        if key in MIXED_SCALAR:
+            continue                                 # decided below
+        if all(v == vals[0] for v in vals):
+            cfg[key] = vals[0]
+            continue
+        if key not in EXTRUDER_KEYS:
+            unexpected.append('%s: %s' % (key, tool_runs(
+                [one_or_all(v) if v else 'unset' for v in vals])))
+            continue
+        ones = []
+        for tag, value in zip(layout.tools, vals):
+            if value is None:
+                unexpected.append('%s: the %s preset does not set it while '
+                                  'another tool\'s does' % (key, tag))
+                break
+            one = uniform(value)
+            if one is None:
+                unexpected.append('%s: the %s preset is not uniform across tools '
+                                  '(%s), so there is no single value to fit this '
+                                  'tool' % (key, tag, value))
+                break
+            ones.append(one)
+        else:
+            cfg[key] = ','.join(ones)
+            composed[key] = ones
+    if unexpected:
+        raise SystemExit(
+            'refusing: the tools in layout %s disagree on keys a layout may not '
+            'vary:\n            %s\n'
+            '          Only PrusaSlicer\'s own per-extruder keys can differ from '
+            'tool to\n          tool (nozzles.py, EXTRUDER_KEYS). Anything else '
+            'describes the\n          machine, so one value has to be chosen for '
+            'it: add it to\n          MIXED_SCALAR with a reason, or resolve the '
+            'disagreement.'
+            % (layout.key, '\n            '.join(unexpected)))
+
+    cfg['printer_variant'] = layout.key
+    cfg['default_print_profile'] = layout_balanced_profile(vendor, layout)
+    cfg['default_filament_profile'] = \
+        tool_cfgs[layout.base_tool - 1]['default_filament_profile']
+    cfg['inherits'] = base_name
+
+    if cfg.get('single_extruder_multi_material') != '0':
+        raise SystemExit(
+            'refusing: %s has single_extruder_multi_material = %s. A mixed layout '
+            'needs 0:\n          PrusaSlicer unifies the nozzles on a '
+            'single-extruder multimaterial\n          printer (Tab.cpp:2742-2756) '
+            'and stops shifting each tool\'s values into\n          index 0 when '
+            'it filters that tool\'s filaments (Preset.cpp:2405), which is\n'
+            '          what makes a per-tool filament list work at all.'
+            % (base_name, cfg.get('single_extruder_multi_material')))
+    assert_per_tool_nozzle_check(cfg, layout)
+    assert cfg['printer_model'] == printer_model, 'model mismatch'
+
+    changed = []
+    for key in sorted(set(cfg) | set(ref)):
+        if cfg.get(key) == ref.get(key):
+            continue
+        if key in composed:
+            why = ('one value per tool - %s - each from the preset this repo '
+                   'builds for that nozzle on its own. PrusaSlicer reads this key '
+                   'per extruder (nozzles.py, EXTRUDER_KEYS)'
+                   % tool_runs(composed[key]))
+        elif key in MIXED_SCALAR:
+            why = MIXED_SCALAR[key]
+        elif key == 'layer_gcode':
+            # The whole G-code block differs only by the dock-fan pattern;
+            # report the pattern, as fix_dock_fan() does everywhere else.
+            stock, fixed, why = DOCK_FAN
+            if ref.get(key, '').replace(stock, fixed) != cfg.get(key):
+                raise SystemExit('refusing: layer_gcode differs from the '
+                                 'shipping preset by more than the dock-fan '
+                                 'fix')
+            changed.append((key, stock, fixed, '%s (x%d)'
+                            % (why, ref.get(key, '').count(stock))))
+            continue
+        else:
+            why = ('every tool\'s preset sets this value, so it is the layout\'s '
+                   'too; see the per-nozzle presets for where it comes from')
+        changed.append((key, ref.get(key, ''), cfg.get(key, ''), why))
+    report.append('  composed from %s, tool by tool; %d keys vary per tool'
+                  % (', '.join(sorted(per_tag)), len(composed)))
+    return cfg, changed
+
+
+def emit(path, cfg, changed, what, model, validated, note=None, version='?',
+         unit='size'):
     with open(path, 'w', encoding='utf-8') as f:
-        f.write('# Prusa CORE One INDX %s, %s mm %s. Generated by %s\n'
-                % (model, dia, kind, BYLINE))
+        f.write('# Prusa CORE One INDX %s, %s. Generated by %s\n'
+                % (model, what, BYLINE))
         f.write('# tools/build_printer_preset.py from PrusaResearch.ini %s.\n' % version)
         f.write('# Fully flattened - a loose user preset is applied over\n')
         f.write('# PrusaSlicer defaults, not over its inherits parent.\n')
         f.write('#\n')
         if not validated:
-            f.write('# UNVALIDATED: this size has not been test printed.\n#\n')
+            f.write('# UNVALIDATED: this %s has not been test printed.\n#\n'
+                    % unit)
         if note:
             f.write('# %s\n#\n' % note)
         f.write('# Changed from the shipping 0.4 preset:\n')
         for key, old, new, why in changed:
             f.write('#   %s: %s -> %s\n'
-                    % (key, old.split(',')[0], new.split(',')[0]))
-            f.write('#       %s\n' % why)
+                    % (key, one_or_all(old), one_or_all(new)))
+            for line in textwrap.wrap(why, 68):
+                f.write('#       %s\n' % line)
         keys = [key for key, _, _, _ in changed]
         behavior = [k for k in ('wipe', 'retract_speed', 'deretract_speed',
                                  'retract_before_wipe') if k in keys]
@@ -479,14 +687,23 @@ def main():
         description='Emit a flattened INDX printer preset for a given nozzle.')
     ap.add_argument('prusa_ini')
     ap.add_argument('outdir')
-    ap.add_argument('-n', '--nozzle', action='append', required=True,
+    ap.add_argument('-n', '--nozzle', action='append', default=[],
                     help='nozzle diameter, e.g. 0.6 (repeatable)')
+    ap.add_argument('--layout', action='append', dest='layouts', default=[],
+                    choices=sorted(LAYOUTS), metavar='KEY',
+                    help='a mixed tool layout, different nozzles on different '
+                         'tools; repeatable (known: %s)'
+                         % ', '.join(sorted(LAYOUTS)))
     ap.add_argument('-m', '--model', action='append',
                     choices=sorted(MODELS), help='INDX model (default 8T)')
     ap.add_argument('--std', action='store_true',
                     help='standard (non-high-flow) nozzle; sizes: %s'
                          % ', '.join(sorted(set(STD_PAIR) | set(STD_DRAFT))))
     a = ap.parse_args()
+    if not a.nozzle and not a.layouts:
+        ap.error('give at least one -n/--nozzle or --layout')
+    if a.std and a.layouts:
+        ap.error('--std applies to -n sizes; a layout names its own nozzles')
 
     vendor = load(a.prusa_ini)
     drafts = load_drafts(a.prusa_ini)
@@ -509,11 +726,12 @@ def main():
                         ('the CORE One HF0.4 -> %s pair.' % dia if dia in STD_PAIR else
                          'Prusa\'s commented-out INDX %s draft, not yet released '
                          'by Prusa.' % dia))
-                kind = 'standard nozzle'
+                what = '%s mm standard nozzle' % dia
             else:
                 cfg, changed = build(vendor, drafts, dia, model, report)
                 name = 'Prusa CORE One INDX %s HF%s nozzle' % (model, dia)
-                validated, note, kind = NOZZLES[dia].validated, None, 'high flow'
+                validated, note = NOZZLES[dia].validated, None
+                what = '%s mm high flow' % dia
                 src = NOZZLES[dia].scaled_from
                 if src:
                     note = ('SCALED: Prusa publishes nothing at %s mm. This is the HF%s '
@@ -521,16 +739,39 @@ def main():
                             'and the size labels moved;\n# retraction and every other key '
                             'are held at HF%s.' % (dia, src, NOZZLES[dia].ratio.normalize(), src))
             path = os.path.join(a.outdir, name + '.ini')
-            emit(path, cfg, changed, dia, model, validated, kind, note, version)
+            emit(path, cfg, changed, what, model, validated, note, version)
 
             print('%s  (%d keys)' % (path, len(cfg)))
             for key, old, new, _ in changed:
                 print('    %-26s %-22s -> %s'
-                      % (key, old.split(',')[0][:21], new.split(',')[0][:44]))
+                      % (key, one_or_all(old)[:21], one_or_all(new)[:44]))
             for line in report:
                 print(line)
             if not validated:
                 print('    !! UNVALIDATED - %s has not been printed' % dia)
+
+    for key in a.layouts:
+        layout = LAYOUTS[key]
+        report = []
+        cfg, changed = build_mixed(vendor, drafts, layout, layout.model, report)
+        name = 'Prusa CORE One INDX %s %s nozzles' % (layout.model, layout.key)
+        note = ('Mixed tool layout, Prusa\'s own workflow for different nozzle '
+                'diameters\n# (help.prusa3d.com article 821176): %s.\n'
+                '# Composed tool by tool from the presets this repo builds for '
+                'each\n# nozzle on its own; only PrusaSlicer\'s per-extruder '
+                'keys vary per tool.' % tool_runs(layout.tools))
+        path = os.path.join(a.outdir, name + '.ini')
+        emit(path, cfg, changed, '%s mixed tool layout' % layout.key,
+             layout.model, layout.validated, note, version, unit='layout')
+
+        print('%s  (%d keys)' % (path, len(cfg)))
+        for k, old, new, _ in changed:
+            print('    %-26s %-22s -> %s'
+                  % (k, one_or_all(old)[:21], one_or_all(new)[:44]))
+        for line in report:
+            print(line)
+        if not layout.validated:
+            print('    !! UNVALIDATED - layout %s has not been printed' % layout.key)
 
     return 0
 

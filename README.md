@@ -9,6 +9,8 @@ nearly so ([Verify](#verify) lists what still appears).
 This repo fills the gap for five nozzles: print profiles that install as
 read-only system presets (lock icon, reset arrows, nothing added to your own
 preset list), a printer preset per nozzle, and a filament bundle per nozzle.
+It also covers one **mixed** setup, different nozzles on different tools of the
+same toolchanger ([Mixed nozzles](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest)).
 Nearly every value is read out of Prusa's own `PrusaResearch.ini`, not invented;
 [docs/PROVENANCE.md](docs/PROVENANCE.md) says where each one comes from.
 
@@ -21,6 +23,7 @@ Nearly every value is read out of Prusa's own `PrusaResearch.ini`, not invented;
 | **HF1.0** (Bondtech CHT) | `0.38mm Detail`, `0.50mm Balanced ★`, `0.69mm Draft` | 19 | not test printed; scaled from 0.8 ([why](#known-gaps)) |
 | **0.4 standard** | Prusa's four HF0.4 profiles, rebound to a standard nozzle: `0.10mm Fine`, `0.15mm Detail`, `0.20mm Balanced ★`, `0.25mm Draft`, each `@COREONEINDX 0.4` | 17 | test printed |
 | **0.25 standard** | none needed: Prusa ships `0.07mm Extra Fine`, `0.10mm Fine ★` and `0.15mm Detail`, each `@COREONEINDX 0.25` | 14 | test printed |
+| **0.25 + HF0.4 mixed** (0.25 on tool 1, HF0.4 on tools 2-8) | `0.07mm Detail`, `0.10mm Balanced ★`, `0.15mm Draft`, each `@COREONEINDX 0.25+HF0.4` | 14 on tool 1, Prusa's own 20 on the rest | not test printed ([details](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest)) |
 
 The star marks the recommended default for each nozzle. Print speeds, in mm/s:
 
@@ -43,8 +46,8 @@ where each size's pressure advance comes from is under
 [Pressure advance by size](docs/PROVENANCE.md#pressure-advance-by-size).
 
 ```
-vendor/hyigerINDX.ini, .idx       print profiles for HF0.6, HF0.8, HF1.0 and standard 0.4 (one bundle)
-printer/*.ini                     one printer preset per nozzle (8T)
+vendor/hyigerINDX.ini, .idx       print profiles for HF0.6, HF0.8, HF1.0, standard 0.4 and the 0.25+HF0.4 mix (one bundle)
+printer/*.ini                     one printer preset per nozzle, plus one for the 0.25+HF0.4 mix (8T)
 filaments/hyigerINDX-<size>-filaments.ini   one filament bundle per nozzle
 personal/                         the author's own extra filaments, exported from Filament DB (see its README)
 tools/, tests/                    the generators for vendor/hyigerINDX.ini, printer/ and filaments/
@@ -110,6 +113,7 @@ cp "printer/Prusa CORE One INDX 8T HF0.6 nozzle.ini" \
    "printer/Prusa CORE One INDX 8T HF1.0 nozzle.ini" \
    "printer/Prusa CORE One INDX 8T 0.4 nozzle.ini" \
    "printer/Prusa CORE One INDX 8T 0.25 nozzle.ini" \
+   "printer/Prusa CORE One INDX 8T 0.25+HF0.4 nozzles.ini" \
    ~/Library/Application\ Support/PrusaSlicer/printer/
 ```
 
@@ -130,6 +134,9 @@ the 8T, 1 to 4 on the 4T), then save under a new name:
 | Retraction / deretraction speed | 40 / 30 | 25 / 15 | 25 / 15 | 40 / 30 | 40 / 30 |
 | Wipe while retracting | on | on | on | off | off |
 | Retract amount before wipe | 80% | 50% | 50% | 80% | 80% |
+
+The mixed preset is not in that table because its values differ from tool to
+tool; [Mixed nozzles](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest) has them.
 
 Leave **Lift height** alone: Prusa's INDX turns on **Use ramping lift** (1.5 mm)
 on every tool, which grays that field out, so don't untick it. The preset files
@@ -152,6 +159,104 @@ selected after switching to it.
 `filaments/hyigerINDX-0.6-filaments.ini`, `-0.8-`, `-1.0-`, `-0.4-` or `-0.25-`.
 They import as ordinary user presets.
 
+For the mixed setup, import `-0.25-` only. Tools 2 to 8 are HF0.4, which is the
+one nozzle Prusa already ships filaments for, and PrusaSlicer offers each tool
+the filaments for its own nozzle - see below.
+
+## Mixed nozzles: 0.25 on tool 1, HF0.4 on the rest
+
+Prusa documents an experimental workflow for fitting **different nozzle
+diameters to different tools** of one toolchanger
+([help.prusa3d.com article 821176](https://help.prusa3d.com/article/experimental-printing-with-different-nozzle-diameters_821176)),
+written for the XL. This repo carries one worked INDX version of it: a standard
+**0.25 mm** nozzle on tool 1 and Prusa's shipping **high-flow 0.4 mm** CHT on
+tools 2 to 8. Fine perimeters and fine top surfaces from the small nozzle,
+sparse infill from the big one.
+
+It is **not test printed.** Prusa calls the workflow experimental and says some
+nozzle combinations can fail; treat the first print as a test.
+
+### What prints with which tool
+
+| Role | Tool | Why |
+|---|---|---|
+| Perimeters, external perimeters, gap fill | 1 (0.25) | the reason for fitting a small nozzle |
+| Solid infill **and top surfaces** | 1 (0.25) | PrusaSlicer has no separate top-surface extruder: `solid_infill_extruder` covers both |
+| Sparse infill | 2 (HF0.4) | the one role where the CHT pays for the tool changes |
+| Supports and support interfaces | 1 (0.25) | support width follows the smaller nozzle anyway, and pinning it is what keeps the wipe tower working |
+
+Every role is pinned, so nothing is printed by "whichever tool is loaded". The
+profiles switch supports to **Organic**, which is required rather than a
+preference: with a wipe tower and non-soluble supports, PrusaSlicer rejects the
+slice outright if a support extruder is pinned and the style is not organic.
+
+Sparse infill runs at 0.45 mm wide, Prusa's own HF0.4 width, and is combined
+across layers up to 0.25 mm of height — the most PrusaSlicer will combine here,
+because it caps combining at the smaller of the infill and solid-infill nozzles.
+Combining is also what keeps the tool changes down: one pair per combined group
+instead of one pair per layer.
+
+| Profile | Layer | Infill every | Infill | Perimeter | Solid | Infill rate |
+|---|---|---|---|---|---|---|
+| `0.07mm Detail @COREONEINDX 0.25+HF0.4` | 0.07 | 3 layers | 285 | 150 | 140 | 24.2 mm³/s |
+| `0.10mm Balanced ★ @COREONEINDX 0.25+HF0.4` | 0.10 | 2 layers | 300 | 150 | 140 | 24.4 mm³/s |
+| `0.15mm Draft @COREONEINDX 0.25+HF0.4` | 0.15 | 1 layer | 300 | 150 | 140 | 18.8 mm³/s |
+
+Speeds in mm/s. The perimeter, solid and support speeds are Prusa's own
+`@COREONEINDX 0.25` values, as are the layer heights and the solid-layer counts
+(11/9, 9/7 and 6/5 top/bottom). Only the infill speed is this repo's, solved so
+the rate matches the 24.4 mm³/s Prusa's own starred `0.20mm Balanced ★
+@COREONEINDX HF0.4` runs infill at, and never faster than that profile's own
+300 mm/s. For comparison, Prusa's 0.25 profiles run infill at 2.4 mm³/s — the
+whole point of the exercise.
+
+### Setting it up
+
+1. **Fit the nozzles, then calibrate tool offsets.** Changing a nozzle changes
+   the offsets.
+2. **Tell the printer** which dock holds which nozzle, including the high-flow
+   flag. The INDX start G-code asks the firmware to verify every used tool
+   (`M862.1 T<n> P{nozzle_diameter[n]} … F{nozzle_high_flow[n]}`), so a dock set
+   wrongly stops the print at the start rather than printing with the wrong
+   nozzle.
+3. **Install** the print bundle (step 1 above) and
+   `printer/Prusa CORE One INDX 8T 0.25+HF0.4 nozzles.ini` (step 2), then import
+   `filaments/hyigerINDX-0.25-filaments.ini` (step 3) — the 0.25 bundle only.
+4. **Load filament per tool.** PrusaSlicer filters each tool's filament list by
+   that tool's own nozzle, so tool 1 is offered this repo's 14 `@COREONEINDX
+   0.25` presets and tools 2 to 8 Prusa's own 20 `@COREONEINDX HF0.4` presets.
+   Nothing else is needed for the HF0.4 tools.
+
+**Or set it up by hand.** Prusa's INDX printer, Expert mode, **Printer
+Settings → Extruder N**, with different values per tool:
+
+| Setting | Extruder 1 | Extruders 2-8 |
+|---|---|---|
+| Nozzle diameter | 0.25 | 0.4 |
+| High flow nozzle | off | on |
+| Max layer height | 0.15 | 0.3 |
+| Min layer height | 0.05 | 0.07 |
+| Retraction length | 0.7 | 0.8 |
+
+Everything else is the same on every tool (retraction 40 / deretraction 30,
+wipe off). PrusaSlicer only forces the nozzles to match on a single-extruder
+multimaterial printer, which the INDX is not, so these stay as you set them.
+Then set the roles in **Print Settings → Multiple Extruders → Extruders**:
+perimeters 1, infill 2, solid infill 1, support and support interface 1; switch
+supports to Organic under **Support material**; and set **Combine infill every**
+per the table above.
+
+### Two things to know
+
+- **Prusa's own three `@COREONEINDX 0.25` profiles also appear** in the print
+  dropdown, because a mixed printer satisfies their condition too
+  (`nozzle_diameter[0]==0.25`). They are perfectly valid, but they print
+  *everything* with tool 1 and ignore the CHT. The `0.25+HF0.4` profiles are the
+  mixed ones.
+- **Tool changes cost purge and time.** Splitting a role across tools means a
+  wipe-tower purge per change. PrusaSlicer also warns that a wipe tower with
+  different nozzle diameters is experimental; that warning is expected here.
+
 ## Verify
 
 Select the printer preset from step 2, not Prusa's HF0.4 one. You should see:
@@ -163,6 +268,7 @@ Select the printer preset from step 2, not Prusa's HF0.4 one. You should see:
 | HF1.0 | 3, with a lock icon | 19, plus some of Prusa's own (see below) |
 | 0.4 standard | 4, with a lock icon | 17, plus Prusa's Generic FLEX and Prusament TPU 95A |
 | 0.25 standard | Prusa's 3 | 14 |
+| 0.25 + HF0.4 mixed | 3, with a lock icon, plus Prusa's 3 `@COREONEINDX 0.25` (see above) | per tool: 14 on tool 1, Prusa's 20 on tools 2-8 |
 
 **On HF1.0, pick only the `@COREONEINDX HF1.0` filaments.** Up to nine of
 Prusa's own `@COREONEINDX HF0.4` presets also appear (Prusament ASA, PETG, PETG
@@ -177,7 +283,10 @@ If the print profiles don't appear:
 - Check **Nozzle diameter** and **High flow nozzle** are set on **every** tool.
   The profiles bind on `nozzle_diameter[0]==0.6` (HF0.6), `==0.8` (HF0.8),
   `==1.0` (HF1.0), or
-  `==0.4 and ! nozzle_high_flow[0]` (0.4 standard).
+  `==0.4 and ! nozzle_high_flow[0]` (0.4 standard). The mixed profiles test
+  two tools: `nozzle_diameter[0]==0.25 and ! nozzle_high_flow[0] and
+  nozzle_diameter[1]==0.4 and nozzle_high_flow[1]`, so tools 1 and 2 both
+  have to be set.
 - Check **Preferences → General → "Suppress ' Template ' filament presets"** is
   off. Despite its name, it hides this bundle's print profiles too.
 - Check both files from step 1 are in `vendor/`, and restart PrusaSlicer.
@@ -201,6 +310,9 @@ Every number is a starting point. Calibrate in this order:
    - 0.25 standard: Prusa's 0.25 figures (PLA 0.1, PETG 0.15, PC 0.14,
      ABS/ASA/BVOH 0.09), about two to four and a half times the 0.4 ones. Widen a pressure
      advance test to about 0.2.
+   - 0.25 + HF0.4 mixed: per tool, since it lives in the filament preset —
+     the 0.25 figures on tool 1, Prusa's HF0.4 ones on tools 2 to 8. Nothing
+     to merge: each tool uses its own filament preset.
 3. **Extrusion multiplier.** Measure wall thickness; don't judge it by eye.
 
 ## Known gaps
@@ -222,10 +334,16 @@ Every number is a starting point. Calibrate in this order:
   The generators refuse to build it this way if Prusa ever adds 1.0 data.
   [How it is built](docs/PROVENANCE.md#the-10-mm-nozzle-is-scaled-not-sourced).
 - **Prusa's own 0.4 filaments show up on HF1.0.** See [Verify](#verify).
+- **The mixed 0.25 + HF0.4 layout has not been test printed**, and Prusa calls
+  the workflow experimental. Every value in it is Prusa's own except the infill
+  speed, which is solved from Prusa's own HF0.4 infill rate.
+  [Details](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest).
 - **The 0.25 setup rests on Prusa's unreleased work.** Its printer comes from a
   draft Prusa has not shipped, and one key in Prusa's 0.25 print profiles is
-  misspelled upstream, so top solid infill runs at 100 mm/s instead of 60. Set
-  it by hand if top surfaces suffer.
+  misspelled upstream (`top solid_infill_speed`), so top solid infill runs at
+  100 mm/s instead of 60. Set it by hand if top surfaces suffer. The mixed
+  profiles are built on those same profiles and carry the typo as written,
+  rather than quietly changing a speed the 0.25 setup was test printed with.
 - **Three print profiles per high-flow nozzle, not four.** Prusa's 0.4 lineup
   also has a Fine profile; the standard 0.4 copies all four.
 - **Generic PVA is not included** at any nozzle: Prusa has no CORE One PVA to
