@@ -10,7 +10,12 @@ whoever edits the code. Keep the README short: derivation detail belongs in
 
 PrusaSlicer profiles for Prusa CORE One INDX toolheads at nozzle sizes Prusa
 ships no INDX printer for (its only variant is `HF0.4`): high-flow HF0.6, HF0.8
-and HF1.0, and standard, non-high-flow 0.4 and 0.25. HF0.6, HF0.8, HF1.0 and
+and HF1.0, and standard, non-high-flow 0.4 and 0.25. Since bundle 0.7.0 it also
+carries one **mixed tool layout**, `0.25+HF0.4`: different nozzles on different
+tools of one toolchanger, which is Prusa's own experimental workflow
+(help.prusa3d.com article 821176) worked through for the INDX. A layout is
+composed from the single-nozzle presets here, not derived; see "Mixed tool
+layouts" below. HF0.6, HF0.8, HF1.0 and
 standard 0.4 print profiles install as read-only **system presets** via a vendor bundle.
 HF1.0 is the one size Prusa publishes nothing for; it is 0.8 scaled up, under
 the exception to non-negotiable 1. At 0.25 the print
@@ -60,7 +65,12 @@ that.
    `derive_filaments.py` and `STD_SKIP` (per material) in
    `derive_std_filaments.py` carry a reason string per entry, as do
    `SIZE_LABELS` in `nozzles.py` and `SCALED_PRINTER` in
-   `build_printer_preset.py` for HF1.0; `scale_common()` and `build_scaled()`
+   `build_printer_preset.py` for HF1.0, and, for a mixed layout,
+   `Layout.extra` in `nozzles.py`, `LAYOUT_BASE` / `ROLE_ANCHOR` /
+   `ROLE_WHY` / `RENAME_WHY` in `build_print_profiles.py` and `MIXED_SCALAR`
+   in `build_printer_preset.py` (`EXTRUDER_KEYS`, `ROLE_KEYS` and
+   `ROLE_SPEED_WIDTH` are copied out of PrusaSlicer and cite their source
+   lines instead of carrying a reason); `scale_common()` and `build_scaled()`
    write a generated reason for every scaled key. `RETARGET`
    (printer pointer templates) and `derive_filaments.py`'s `TRANSFER` (a bare
    key list) are each covered by one rule stated in their comment instead.
@@ -77,9 +87,13 @@ that.
    override channel without one is the failure mode to watch for.
 3. **Mark unvalidated output as unvalidated.** `Nozzle.validated` drives a
    warning banner in stdout and a comment in the emitted file, in the print
-   bundle, the printer presets and the high-flow filament bundles alike; and
+   bundle, the printer presets and the high-flow filament bundles alike;
    `STD_VALIDATED` does the same for every standard-nozzle output: `--std` on
-   the two build tools, and both `derive_std_filaments.py` bundles. Don't
+   the two build tools, and both `derive_std_filaments.py` bundles; and
+   `Layout.validated` does it for a mixed layout's print profiles and printer
+   preset. A layout composed entirely from printed sizes is still unprinted as
+   a layout: `0.25+HF0.4` is built from two test-printed setups and is
+   `validated=False`. Don't
    quietly promote extrapolated numbers, and don't treat sourced as validated:
    validated means test printed.
 4. **Byline is `hyiger`.** Never use a real name in profiles, commits, README
@@ -94,14 +108,14 @@ that.
 ## Layout
 
 ```
-vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, HF0.8, HF1.0, standard 0.4 (0.25 uses Prusa's)
+vendor/hyigerINDX.ini      GENERATED  print profiles: HF0.6, HF0.8, HF1.0, standard 0.4, mixed 0.25+HF0.4 (plain 0.25 uses Prusa's)
 vendor/hyigerINDX.idx      handwritten  version index
 filaments/hyigerINDX-*.ini GENERATED  one bundle per nozzle size
-printer/*.ini              GENERATED  flattened printer presets
+printer/*.ini              GENERATED  flattened printer presets, one per size plus one per mixed layout
 personal/*.ini             FOREIGN    exports from the Filament DB app
 personal/README.md         handwritten  why they don't import as a bundle
 docs/PROVENANCE.md         handwritten  provenance and design deep-dive
-tools/nozzles.py           handwritten  per-nozzle config table — start here
+tools/nozzles.py           handwritten  per-nozzle and per-layout config table — start here
 tools/build_print_profiles.py  GENERATOR  vendor bundle (HF sizes, --std 0.4)
 tools/build_printer_preset.py  GENERATOR  printer presets (HF sizes, --std)
 tools/derive_filaments.py      GENERATOR  high-flow filament bundles
@@ -127,9 +141,10 @@ purpose.
 PR=~/Library/Application\ Support/PrusaSlicer/vendor/PrusaResearch.ini
 
 python3 tools/build_print_profiles.py "$PR" /dev/null --list
-python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4
+python3 tools/build_print_profiles.py "$PR" vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4 --layout 0.25+HF0.4
 python3 tools/build_printer_preset.py "$PR" printer -n 0.6 -n 0.8 -n 1.0
 python3 tools/build_printer_preset.py "$PR" printer -n 0.4 -n 0.25 --std
+python3 tools/build_printer_preset.py "$PR" printer --layout 0.25+HF0.4
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.6-filaments.ini -n 0.6
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-0.8-filaments.ini -n 0.8
 python3 tools/derive_filaments.py "$PR" filaments/hyigerINDX-1.0-filaments.ini -n 1.0
@@ -307,6 +322,82 @@ holds.
 
   A new release can add more. Grep `^; \[` before assuming a size has no Prusa
   source.
+- **A role's flow uses that role's extruder's nozzle.** `PrintRegion::flow`
+  (`PrintRegion.cpp:63`) reads `nozzle_diameter` at `this->extruder(role) - 1`,
+  where `extruder(role)` is `perimeter_extruder` / `infill_extruder` /
+  `solid_infill_extruder` (`PrintRegion.cpp:22-35`). Pin a role to one tool and
+  every per-role width and speed key belongs to exactly one nozzle — which is
+  what lets a mixed layout keep explicit widths where Prusa's article says to
+  zero them (auto would be 1.125 × nozzle, `Flow::auto_extrusion_width`,
+  `Flow.cpp:33`). A role left at `0` has no knowable nozzle.
+- **Filament compatibility is evaluated per extruder, print compatibility is
+  not.** `ExtruderFilaments::update_compatible_internal` (`Preset.cpp:2404-2415`)
+  copies every per-extruder key's value at tool N into index 0 before evaluating
+  a filament's `compatible_printers_condition`, whenever
+  `single_extruder_multi_material` is 0 — which the INDX sets. So
+  `nozzle_diameter[0]==0.4 and nozzle_high_flow[0]` tests *that tool's* nozzle,
+  and the filament bundles here need no change for a mixed printer.
+  `default_filament_profile` is the one per-extruder key the shift skips.
+  `PresetCollection::update_compatible_internal` (`Preset.cpp:1352-1368`) does no
+  such shift, so **print** presets always see tool 1.
+- **An out-of-range vector index reads element 0; it does not throw.**
+  `PlaceholderParser.cpp:1074` clamps to 0 when reading
+  (`vector_element_to_expr`); only *assignment* throws (1152). So
+  `nozzle_diameter[1]` in a `compatible_printers_condition` is safe on any
+  printer, including a single-extruder one, where it compares tool 1 with
+  itself. This matters because `is_compatible_with_printer` returns **true** on
+  a parse error (`Preset.cpp:402-405`): a condition that threw would make the
+  preset compatible with everything.
+- **Mixed nozzle diameters are legal; two warnings and one hard rule.** With a
+  wipe tower, differing diameters raise `_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER`
+  (`Print.cpp:567`), a warning, not an error; a support extruder left at `0`
+  while diameters differ raises `_SUPPORT_NOZZLE_DIAMETER_DIFFER`
+  (`Print.cpp:675-679`). The hard rule: with a wipe tower and non-soluble
+  supports, `Print::validate` **rejects** the slice unless both support
+  extruders are `0` — except when `support_material_style` is organic, which
+  skips that branch entirely (`Print.cpp:685-692`). Pinning supports therefore
+  forces organic supports. Layer height must also be ≤ the smallest *used*
+  nozzle, and `first_layer_height` likewise (`Print.cpp:735-741`).
+- **Per-extruder layer-height limits do not constrain a profile's layer
+  height.** `SlicingParameters::create_from_config` widens them to include it
+  (`Slicing.cpp:120-121`); they bound variable layer height and support layers
+  only. PrusaSlicer's default ceiling, when `max_layer_height` is 0, is
+  0.75 × nozzle (`Slicing.cpp:48`).
+- **Infill combining is capped by the smaller of two nozzles.**
+  `PrintObject::combine_infill` (`PrintObject.cpp:3126-3132`) caps the combined
+  height at `min(nozzle[infill_extruder], nozzle[solid_infill_extruder])`, so
+  keeping solid infill on a small nozzle caps combining at that nozzle however
+  big the infill one is. `automatic_infill_combination` (2.9.6) caps at
+  `min(automatic_infill_combination_max_layer_height, nozzle)`, defaulting to
+  100% of the nozzle, so it is no more permissive — and its per-region layer
+  count is not knowable in advance, which is why layouts set
+  `infill_every_layers` instead.
+- **PrusaSlicer only unifies nozzles on a single-extruder multimaterial
+  printer.** Both "all extruders must have the same nozzle diameter" dialogs
+  (`Tab.cpp:2742-2756` and `3252-3280`) are gated on
+  `single_extruder_multi_material`, which the INDX sets to 0, so per-tool
+  diameters are freely editable and stay as written.
+- **The INDX start G-code already checks each tool's own nozzle.** Prusa emits
+  `M862.1 T<n> P{nozzle_diameter[n]} A{filament_abrasive[n]} F{nozzle_high_flow[n]}`
+  per used tool, so the firmware verifies a mixed layout without any change
+  here. `assert_per_tool_nozzle_check()` refuses to write a layout preset if a
+  re-pin ever collapses that to one tool.
+- **`printer_variant` constrains nothing for a user preset.** A variant is
+  validated only when loading a vendor bundle's `[printer:]` sections against
+  the model's declared `variants` (`PresetBundle.cpp:1642-1659`), and
+  `Preset::set_visible_from_appconfig` returns early when the preset has no
+  vendor of its own (`Preset.cpp:425`), which every preset in `printer/` does.
+  That is why `0.25`, `0.4` and `0.25+HF0.4` work as variant tags although Prusa
+  declares only `HF0.4`.
+- **An unknown key in a bundle section is silently dropped, not an error.**
+  `load_configbundle` does not wrap `set_deserialize` per key, and
+  `UnknownOptionException` derives from `ConfigurationError`, so a throw there
+  would abort the whole bundle (`PresetBundle.cpp:1609, 1623-1624`). It never
+  gets that far: `PrintConfigDef::handle_legacy` clears any key the config
+  definition does not have (`PrintConfig.cpp:5383-5386`) and `set_deserialize`
+  returns early on an empty key. That is why Prusa's own misspelled
+  `top solid_infill_speed` in `*INDX_025_common*` is harmless, and why copying
+  it verbatim into a layout's profiles is too.
 - **Vendor bundles may omit keys.** Anything the chain doesn't set falls back to
   PrusaSlicer defaults. Emit only what is sourced; pinning defaults risks
   freezing a value Prusa later changes.
@@ -466,6 +557,52 @@ chamber values (60/50 °C) that no preset uses yet; 2.5.12 has no L INDX printer
 — so a fixed list would silently diverge. Here that drops `COREONEL_INDX*` from
 Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
 
+### Mixed tool layouts
+
+`LAYOUTS` in `nozzles.py` holds one entry, `0.25+HF0.4`: a standard 0.25 on tool
+1, Prusa's HF0.4 on tools 2-8. A layout is **composed**, never derived. Its two
+halves work differently:
+
+- **Printer preset** (`build_mixed()`): each tool's nozzle already has a preset
+  here, so the layout interleaves them tool by tool. Only PrusaSlicer's own
+  per-extruder keys may vary that way — `EXTRUDER_KEYS` is
+  `PrintConfigDef::init_extruder_option_keys` (`PrintConfig.cpp:4124-4131`)
+  copied out. At 2.5.12 six keys differ: `nozzle_diameter`, `nozzle_high_flow`,
+  `min_layer_height`, `max_layer_height`, `retract_length`, `retract_lift`. Any
+  other key the two nozzles' presets disagree on describes the machine, and the
+  build refuses unless `MIXED_SCALAR` (key → reason) says what to do with it, so
+  a re-pin cannot absorb an unreviewed disagreement. A source preset whose
+  per-extruder vector is non-uniform, or that leaves a key another tool sets,
+  also refuses: there would be no single value to fit that tool.
+- **Print profiles** (`build_layout()`): **Prusa's own profiles for the tool that
+  prints perimeters**, one per tier, not the bare common. Prusa tunes the 0.25
+  profiles per tier (11/9 solid layers at 0.07, 9/7 at 0.10, 6/5 at 0.15, which
+  also widens the perimeters to 0.27), so the common flattened over every tier
+  would put the finest tier's shell on the coarsest. The ladder is therefore
+  Prusa's own 0.07 / 0.10 / 0.15, not the `NOZZLES['0.25'].layers` ladder, and
+  `LAYOUT_BASE` names the profile suffix per base tool. Prusa shipping a
+  different number of those profiles than there are `TIERS` refuses: which map
+  to Detail / Balanced / Draft is a human decision.
+
+Roles are pinned from `Layout.roles` (every one, never left at Prusa's `0`), and
+a role on a tool other than the base tool takes:
+
+- its **widths** verbatim from `ROLE_ANCHOR[tag]`, a Prusa profile that ships at
+  that nozzle — at 2.5.12 `0.20mm Balanced ★ @COREONEINDX HF0.4`, the same
+  starred profile `FLOW_06` is anchored against;
+- its **speeds** re-solved so the volumetric rate equals the rate that anchor
+  runs the same role at (0.45 × 0.20 at 300 mm/s = 24.4 mm³/s), at the layout's
+  own geometry and never past the anchor's own speed. `ROLE_KEYS` says which keys
+  follow which role (from `PrintRegion::flow`); `ROLE_SPEED_WIDTH` says which
+  width each speed is solved against, and deliberately omits `bridge_speed`, so
+  moving solid infill refuses until someone works through `Flow::bridging_flow`.
+
+`infill_every_layers` is per tier, set to the most PrusaSlicer will combine
+(`combine_cap()`; 3 / 2 / 1 here). `interlocking_beam_width` is **not** set — 2 ×
+nozzle has no meaning with two nozzles fitted — and `COMMON_EDITS` otherwise
+applies. The binding tests only the tools the layout prints with, by index, and
+keeps Prusa's own `printer_model` clause.
+
 ## Conventions
 
 - Profile names: `<layer>mm <Tier> @COREONEINDX HF<dia>`, layer height to two
@@ -476,8 +613,15 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
   STD 0.4 filaments with no size (`@COREONE`; its commented INDX drafts
   `<mat> @COREONEINDX`). At 0.25 Prusa's drafts are sized, `@COREONEINDX 0.25`,
   as ours are.
-- The star `★` marks the **recommended default only** — one per nozzle size, on
-  Balanced. It is not a decoration for every profile.
+- A mixed layout is named by its tools, not by one nozzle: prints
+  `<layer>mm <Tier> @COREONEINDX 0.25+HF0.4`, printer
+  `Prusa CORE One INDX 8T 0.25+HF0.4 nozzles` (plural), hidden parent
+  `*COREONEINDX 0.25+HF0.4*`, G-code `_0.25+HF0.4n_`. The tier labels are this
+  repo's `TIERS` over Prusa's own layer heights, which is forced rather than
+  stylistic: see the alias-filter entry under "Things that look wrong but
+  aren't".
+- The star `★` marks the **recommended default only** — one per nozzle size and
+  one per layout, on Balanced. It is not a decoration for every profile.
 - Hidden parents use asterisks: `*COREONEINDX HF0.6*`. PrusaSlicer strips these
   during flattening and never shows them.
 - Commit messages explain *why* a value changed, with the number that motivated
@@ -511,6 +655,21 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
    `docs/PROVENANCE.md` (What the bundles contain, Setting a printer up by hand,
    Adding a nozzle size, Pressure advance by size).
 
+## Adding a mixed tool layout
+
+A layout is an entry in `LAYOUTS`, not a `Nozzle`. It needs: the perimeter tool
+listed in `LAYOUT_BASE`; a `ROLE_ANCHOR` entry for every tool a role is moved
+**onto**; a printer preset buildable here for each tool's nozzle (the layout's
+is composed from them); `validated=False`; and a reason on every `extra` entry.
+No filament work — each tool is already offered the filaments for its own
+nozzle. Rebuild the bundle with every size *and* layout it carries, bump
+`BUNDLE_VERSION`, add the `.idx` line, and update the per-layout rows in
+`README.md` (What you get, the `cp` list, Mixed nozzles, Verify, Known gaps) and
+`docs/PROVENANCE.md` (Mixed tool layouts, Adding a mixed tool layout).
+
+Bindings test tools by index, so swapping which dock holds which nozzle is a
+different layout, not the same one.
+
 ## Things that look wrong but aren't
 
 - **An HF1.0 printer is also offered nine of Prusa's own `@COREONEINDX HF0.4`
@@ -540,6 +699,56 @@ Generic ABS, Prusament ASA, both BVOHs and both PC Blends.
   from Prusa's `*INDX_08hf_common*`.** They name the size, so `SIZE_LABELS`
   moves them to 1.0; held, they would bind 1.0 profiles to a 0.8 nozzle and
   name its G-code `_0.8n_`.
+
+- **A mixed printer is offered Prusa's own three `@COREONEINDX 0.25` prints as
+  well as the three `0.25+HF0.4` ones.** Prusa's bind on
+  `nozzle_diameter[0]==0.25`, which a layout with 0.25 on tool 1 satisfies.
+  They are valid — they just print everything with tool 1 and ignore the CHT.
+  Not fixable here: they are Prusa's presets. The README's Mixed nozzles section
+  warns about it.
+- **A layout's tiers are renamed instead of keeping Prusa's names.** Because of
+  the entry above, Prusa's 0.25 profiles are *compatible* on a mixed printer,
+  and `PresetCollection::update_compatible_internal` (`Preset.cpp:1388-1401`)
+  marks a templates-vendor preset incompatible whenever a compatible
+  non-templates preset shares its alias — the name before `@`. Keeping
+  `0.10mm Fine ★` would hide this layout's whole tier behind Prusa's. This is the
+  same filter the `--std 0.4` copies dodge only because no printer accepts both
+  of those bindings; a mixed printer does accept both of these. `RENAME_WHY`
+  records it.
+- **Infill combining on `0.25+HF0.4` is capped by the 0.25 nozzle, not the
+  0.4.** `PrintObject::combine_infill` caps the combined height at the smaller of
+  the infill and **solid-infill** extruders' nozzles
+  (`PrintObject.cpp:3126-3132`), and the layout keeps solid infill and top
+  surfaces on the 0.25 tool for surface quality. So the cap is 0.25 mm: 3 layers
+  at 0.07, 2 at 0.10, 1 — no combining at all — at 0.15. Putting solid infill on
+  the 0.4 tool would raise the cap and lower the top-surface quality; that was
+  the choice, not an oversight.
+- **A layout's `infill_speed` is capped at 300 mm/s and so misses its target at
+  the coarsest tier.** The solved speed for 24.4 mm³/s at 0.45 × 0.15 mm is
+  390 mm/s; the cap is Prusa's own `infill_speed` in the anchor profile, because
+  nothing here should ask more of a nozzle than Prusa does. The 0.15 tier
+  therefore runs 18.8 mm³/s, reported in the header and on stdout.
+- **The `0.25+HF0.4` print profiles carry Prusa's `top solid_infill_speed`
+  typo.** `*INDX_025_common*` writes it with a space, so PrusaSlicer ignores the
+  key and top solid infill runs at the inherited 100 mm/s rather than the 60
+  Prusa evidently meant. It is copied as written: the plain 0.25 setup was test
+  printed that way, and silently changing a speed is not the same kind of fix as
+  `DOCK_FAN`, which restores a behaviour the typo disables outright. Documented
+  as a gap in both the README and docs/PROVENANCE.md.
+- **A layout's printer preset writes one `default_filament_profile`, not one per
+  tool.** It is a per-extruder key, but
+  `ExtruderFilaments::update_compatible_internal` skips exactly this key when it
+  shifts a tool's values into index 0 (`Preset.cpp:2407-2409`), so entries past
+  the first would be written and never read. `MIXED_SCALAR` records that.
+- **Tools 2-8 of the mixed layout get Prusa's own HF0.4 filaments, and that is
+  the intended outcome.** HF0.4 is the one INDX nozzle Prusa ships filaments
+  for, so there is nothing to derive; `filaments/hyigerINDX-0.25-filaments.ini`
+  covers tool 1 and nothing new is emitted. The per-tool filtering that makes
+  this work is `Preset.cpp:2404-2415`.
+- **`interlocking_beam_width` is unset on a layout.** `COMMON_EDITS` sets it to
+  2 × nozzle everywhere else; with two nozzles fitted there is no single nozzle
+  to double. It is inert unless interlocking beams are switched on, exactly as
+  on the `--std` path.
 
 - **`0.2` is rejected.** There is no 0.2 mm INDX nozzle, and Prusa defines no
   INDX common below `*INDX_025_common*`. Not a bug.
