@@ -340,7 +340,8 @@ Prusa documents fitting **different nozzle diameters to different tools** of one
 toolchanger as an experimental workflow
 ([article 821176](https://help.prusa3d.com/article/experimental-printing-with-different-nozzle-diameters_821176)),
 written for the XL. `LAYOUTS` in `tools/nozzles.py` carries one INDX layout,
-`0.25+HF0.4`: a standard 0.25 on tool 1, Prusa's shipping HF0.4 on tools 2 to 8.
+`0.25+HF0.4`: a standard 0.25 on tool 1, Prusa's shipping HF0.4 on tools 2 to 8,
+test printed as a layout on 2026-10-24.
 
 Nothing new is derived for it. Four PrusaSlicer behaviors decide what a layout
 can and cannot be, and all four were read out of `version_2.9.6`:
@@ -891,12 +892,14 @@ The README lists these in short. Here is each one in full.
 
 - **Speeds are derived, not sourced.** If Prusa completes the speed pass on the
   per-nozzle commons, prefer theirs.
-- **The mixed `0.25+HF0.4` layout has not been printed**, and Prusa calls the
-  workflow experimental, warning that some nozzle combinations can fail. Every
-  value in it is Prusa's own except `infill_speed`, which is solved from the
-  24.4 mm³/s Prusa's own starred HF0.4 profile runs infill at. Two consequences
-  of the role split are worth knowing before the first print: a wipe-tower purge
-  per tool change, which infill combining reduces but does not remove, and
+- **Mixed nozzles are Prusa's experimental workflow.** The `0.25+HF0.4` layout
+  is test printed (2026-10-24, a 0.25 standard nozzle on tool 1 and a 0.4 CHT on
+  tool 2), but Prusa warns that some nozzle combinations can fail, and this repo
+  carries only that one pair. Every value in it is Prusa's own except
+  `infill_speed`, which is solved from the 24.4 mm³/s Prusa's own starred HF0.4
+  profile runs infill at. Two consequences of the role split are worth knowing: a
+  wipe-tower purge per tool change, which infill combining reduces but does not
+  remove, and
   PrusaSlicer's standing warning that a wipe tower with differing nozzle
   diameters is experimental (`_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER`). The layout's
   profiles also carry Prusa's upstream `top solid_infill_speed` typo as written,

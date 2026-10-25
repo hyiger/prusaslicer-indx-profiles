@@ -1,4 +1,5 @@
 min_slic3r_version = 2.9.6
+0.7.1 Mixed 0.25+HF0.4 test printed: UNVALIDATED note dropped; no print profile value changed
 0.7.0 Mixed tool layout 0.25+HF0.4: Prusa's own 0.25 prints, roles pinned per tool, sparse infill on the CHT; unvalidated
 0.6.1 Standard 0.4 test printed: UNVALIDATED note dropped; no print profile value changed
 0.6.0 HF0.8 print profiles, from Prusa's *INDX_08hf_common*; flow targets extrapolated, unvalidated

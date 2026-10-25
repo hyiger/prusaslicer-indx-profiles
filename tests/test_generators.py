@@ -890,7 +890,9 @@ class LayoutPrinterPreset(Tool):
                       out)
         self.assertIn('inherits = Prusa CORE One INDX 8T HF0.4 nozzle', out)
         self.assertNotIn('renamed_from', out)
-        self.assertIn('UNVALIDATED: this layout has not been test printed.', out)
+        # 0.25+HF0.4 is test printed, so no banner; the banner itself is
+        # tested against Layout.validated in LayoutTableGuards below.
+        self.assertNotIn('UNVALIDATED', out)
 
     def test_refuses_a_printer_wide_disagreement(self):
         # A draft key that is not per-extruder: the two nozzles would be claiming
@@ -954,6 +956,20 @@ class LayoutTableGuards(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             layout.tool_tag(len(layout.tools) + 1)
         self.assertIn('to pin a role to', str(caught.exception))
+
+    def test_an_unvalidated_layout_says_so_in_the_preset(self):
+        """Non-negotiable 3: Layout.validated, not the table's current value,
+        is what drives the banner."""
+        import build_printer_preset
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = os.path.join(tmp.name, 'p.ini')
+        for validated, expect in ((False, True), (True, False)):
+            build_printer_preset.emit(out, {'a': '1'}, [], '0.25+HF0.4 mixed tool layout',
+                                      '8T', validated, unit='layout')
+            with open(out, encoding='utf-8') as f:
+                banner = 'UNVALIDATED: this layout has not been test printed.' in f.read()
+            self.assertEqual(banner, expect, 'validated=%s' % validated)
 
     def test_combining_is_capped_by_the_smaller_nozzle(self):
         # Solid infill on the 0.25 tool caps combining at 0.25 mm, not 0.4.

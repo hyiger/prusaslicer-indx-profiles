@@ -23,7 +23,7 @@ Nearly every value is read out of Prusa's own `PrusaResearch.ini`, not invented;
 | **HF1.0** (Bondtech CHT) | `0.38mm Detail`, `0.50mm Balanced ★`, `0.69mm Draft` | 19 | not test printed; scaled from 0.8 ([why](#known-gaps)) |
 | **0.4 standard** | Prusa's four HF0.4 profiles, rebound to a standard nozzle: `0.10mm Fine`, `0.15mm Detail`, `0.20mm Balanced ★`, `0.25mm Draft`, each `@COREONEINDX 0.4` | 17 | test printed |
 | **0.25 standard** | none needed: Prusa ships `0.07mm Extra Fine`, `0.10mm Fine ★` and `0.15mm Detail`, each `@COREONEINDX 0.25` | 14 | test printed |
-| **0.25 + HF0.4 mixed** (0.25 on tool 1, HF0.4 on tools 2-8) | `0.07mm Detail`, `0.10mm Balanced ★`, `0.15mm Draft`, each `@COREONEINDX 0.25+HF0.4` | 14 on tool 1, Prusa's own 20 on the rest | not test printed ([details](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest)) |
+| **0.25 + HF0.4 mixed** (0.25 on tool 1, HF0.4 on tools 2-8) | `0.07mm Detail`, `0.10mm Balanced ★`, `0.15mm Draft`, each `@COREONEINDX 0.25+HF0.4` | 14 on tool 1, Prusa's own 20 on the rest | test printed ([details](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest)) |
 
 The star marks the recommended default for each nozzle. Print speeds, in mm/s:
 
@@ -173,8 +173,9 @@ written for the XL. This repo carries one worked INDX version of it: a standard
 tools 2 to 8. Fine perimeters and fine top surfaces from the small nozzle,
 sparse infill from the big one.
 
-It is **not test printed.** Prusa calls the workflow experimental and says some
-nozzle combinations can fail; treat the first print as a test.
+Test printed on an 8T with those two nozzles. Prusa still calls the workflow
+itself experimental and warns that some nozzle combinations can fail, so a
+different pair is new ground even though this one works.
 
 ### What prints with which tool
 
@@ -317,8 +318,8 @@ Every number is a starting point. Calibrate in this order:
 
 ## Known gaps
 
-- **HF0.8 and HF1.0 have not been test printed.** HF0.6, standard 0.4 and
-  standard 0.25 have. HF0.8's print speeds are extrapolated and HF1.0 is
+- **HF0.8 and HF1.0 have not been test printed.** HF0.6, standard 0.4, standard
+  0.25 and the mixed 0.25 + HF0.4 layout have. HF0.8's print speeds are extrapolated and HF1.0 is
   scaled from HF0.8; both are covered below.
 - **HF0.8's print speeds are extrapolated.** Prusa has done no speed pass at
   0.8, so the speeds are solved from flow targets this repo extrapolated past
@@ -334,9 +335,9 @@ Every number is a starting point. Calibrate in this order:
   The generators refuse to build it this way if Prusa ever adds 1.0 data.
   [How it is built](docs/PROVENANCE.md#the-10-mm-nozzle-is-scaled-not-sourced).
 - **Prusa's own 0.4 filaments show up on HF1.0.** See [Verify](#verify).
-- **The mixed 0.25 + HF0.4 layout has not been test printed**, and Prusa calls
-  the workflow experimental. Every value in it is Prusa's own except the infill
-  speed, which is solved from Prusa's own HF0.4 infill rate.
+- **Mixed nozzles are Prusa's experimental workflow.** The 0.25 + HF0.4 layout
+  is test printed, but Prusa warns that some nozzle combinations can fail, and
+  this repo carries only that one pair.
   [Details](#mixed-nozzles-025-on-tool-1-hf04-on-the-rest).
 - **The 0.25 setup rests on Prusa's unreleased work.** Its printer comes from a
   draft Prusa has not shipped, and one key in Prusa's 0.25 print profiles is
