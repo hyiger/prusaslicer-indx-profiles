@@ -294,8 +294,9 @@ COMMON_EDITS = {
 #     the end of a vector reads element 0 rather than throwing
 #     (PlaceholderParser.cpp:1074), so testing tool 2 is safe on any printer.
 #
-# A layout is always validated=False until printed: the composition is sourced,
-# but no mixed-nozzle INDX print has been made here.
+# A layout stays validated=False until printed as a layout. Being composed from
+# sizes that are themselves test printed is not the same thing: the role split,
+# the tool changes and the combined infill are exercised by nothing else.
 
 # PrusaSlicer's own per-extruder keys: PrintConfigDef::init_extruder_option_keys
 # (PrintConfig.cpp:4124-4131, version_2.9.6). These are the only printer keys a
@@ -468,6 +469,10 @@ LAYOUTS = {
                 '_SUPPORT_NOZZLE_DIAMETER_DIFFER (Print.cpp:675-679). Prusa\'s '
                 'article prescribes the same pair of changes'),
         },
+        # Test printed on an INDX 8T with a 0.25 standard nozzle on tool 1 and
+        # a 0.4 high-flow CHT on tool 2, reported 2026-10-24. Composition is
+        # Prusa's own either way; this is the layout itself having been run.
+        validated=True,
         note='mixed layout: composed from the 0.25 and HF0.4 presets this repo '
-             'already builds, but no mixed-nozzle print has been made'),
+             'already builds, and test printed as a layout'),
 }

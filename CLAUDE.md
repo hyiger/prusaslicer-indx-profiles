@@ -91,9 +91,11 @@ that.
    `STD_VALIDATED` does the same for every standard-nozzle output: `--std` on
    the two build tools, and both `derive_std_filaments.py` bundles; and
    `Layout.validated` does it for a mixed layout's print profiles and printer
-   preset. A layout composed entirely from printed sizes is still unprinted as
-   a layout: `0.25+HF0.4` is built from two test-printed setups and is
-   `validated=False`. Don't
+   preset. A layout composed entirely from printed sizes is still unprinted as a
+   layout until a mixed print is made: the role split, the tool changes and the
+   combined infill are exercised by nothing else. (`0.25+HF0.4` was flipped to
+   `True` on 2026-10-24, printed with a 0.25 standard nozzle on tool 1 and a 0.4
+   CHT on tool 2.) Don't
    quietly promote extrapolated numbers, and don't treat sourced as validated:
    validated means test printed.
 4. **Byline is `hyiger`.** Never use a real name in profiles, commits, README
