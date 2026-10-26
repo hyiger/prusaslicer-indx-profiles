@@ -73,8 +73,9 @@ import re
 import sys
 import textwrap
 
-from build_print_profiles import (assert_unsourced, layout_balanced_profile,
-                                  load, load_drafts, resolve)
+from build_print_profiles import (assert_roles_pinned, assert_unsourced,
+                                  layout_balanced_profile, load, load_drafts,
+                                  resolve)
 from nozzles import (EXTRUDER_KEYS, LAYOUTS, NOZZLES, STD_VALIDATED, TIERS,
                      scale, split_tag, tool_runs)
 
@@ -323,9 +324,21 @@ def apply_draft(cfg, draft, changed, report, label):
     if not draft:
         report.append('  no Prusa INDX %s printer draft upstream; delta only' % label)
         return
-    unreviewed = []
+    unreviewed, introduced = [], []
     for key, value in sorted(draft.items()):
-        if key in DRAFT_SKIP or key not in cfg:
+        if key in DRAFT_SKIP:
+            continue
+        if key not in cfg:
+            # A key Prusa types ONLY in the draft. Absence from the base does not
+            # make it irrelevant - PrusaSlicer would supply its compiled default,
+            # and the draft is Prusa saying otherwise for this nozzle on this
+            # toolchanger. It also has no arity template here, so adopting it
+            # needs a human: refuse rather than drop it.
+            introduced.append(
+                '%s = %s%s' % (key, value,
+                               ' (in DRAFT_ADOPT, but with no base value its '
+                               'arity is undetermined)' if key in DRAFT_ADOPT
+                               else ''))
             continue
         one = uniform(value)
         if one is None:
@@ -341,6 +354,17 @@ def apply_draft(cfg, draft, changed, report, label):
         changed.append((key, cfg[key], new, 'Prusa\'s commented INDX %s printer '
                         'draft: %s' % (label, DRAFT_ADOPT[key])))
         cfg[key] = new
+    if introduced:
+        raise SystemExit(
+            'refusing: Prusa\'s commented INDX %s printer draft sets keys the HF0.4 '
+            'base does\n          not, so they reach no review gate and would be '
+            'dropped:\n            %s\n'
+            '          PrusaSlicer would fall back to its compiled default for '
+            'each, which is\n          not what the draft says. Decide per key: '
+            'add it to DRAFT_ADOPT and\n          handle its type and per-tool '
+            'arity explicitly, or to DRAFT_SKIP with\n          the reason it is '
+            'structure rather than a value.'
+            % (label, '\n            '.join(introduced)))
     if unreviewed:
         raise SystemExit(
             'refusing: Prusa\'s commented INDX %s printer draft disagrees on keys that\n'
@@ -468,17 +492,33 @@ MIXED_SCALAR = {
                        'whose tags Prusa does not declare either, already show',
     'default_print_profile': 'INDX pointer, retargeted to the Balanced profile '
                              'this layout emits',
-    'default_filament_profile': 'the base tool\'s. PrusaSlicer reads index 0 '
-                                'only: ExtruderFilaments::update_compatible_'
-                                'internal skips this one key when it shifts a '
-                                'tool\'s per-extruder values into index 0 '
-                                '(Preset.cpp:2407-2409), so a per-tool vector '
-                                'here would be written and never read',
+    'default_filament_profile': 'the base tool\'s. This is the one per-extruder '
+                                'key that ExtruderFilaments::update_compatible_'
+                                'internal skips when it shifts a tool\'s values '
+                                'into index 0 (Preset.cpp:2410-2411), so a '
+                                'per-tool vector here would change no tool\'s '
+                                'filament list. PrusaSlicer uses it only to pick '
+                                'a first filament after a printer switch',
     'inherits': 'the shipping HF0.4 preset, as in every preset here: it carries '
                 'no values into a flattened file, but it is how a user preset '
                 'gets a vendor, and so how Prusa\'s own print and filament '
                 'presets stay on offer',
 }
+
+
+# Per-extruder keys PrusaSlicer serialises with ';' instead of ',' - the string
+# vectors among EXTRUDER_KEYS (ConfigOptionStrings). Joining one of these with a
+# comma would emit a single malformed element, and reading it with uniform(),
+# which splits on ',', would mistake the whole vector for one value.
+SEMI_SEPARATED = {'extruder_colour', 'default_filament_profile'}
+
+
+def element(value, pos, key):
+    """Tool `pos`'s own entry in a per-extruder vector, read the way PrusaSlicer
+    reads one: an index past the end falls back to the first element
+    (ConfigOptionVector::get_at, Config.hpp:583-587)."""
+    parts = [p.strip() for p in value.split(';' if key in SEMI_SEPARATED else ',')]
+    return parts[pos] if pos < len(parts) else parts[0]
 
 
 def one_or_all(value):
@@ -539,6 +579,12 @@ def build_mixed(vendor, drafts, layout, model, report):
         raise SystemExit('refusing: layout %s is an INDX %s layout (%d tools), '
                          'not %s' % (layout.key, layout.model,
                                      len(layout.tools), model))
+    # Validate the layout before composing anything: a layout the print bundle
+    # would refuse must not get a printer preset whose default_print_profile
+    # points at profiles that were never emitted.
+    assert_roles_pinned(layout)
+    balanced = layout_balanced_profile(vendor, layout)
+
     printer_model, base_name = MODELS[model]
     ref = dict(resolve(vendor, 'printer:' + base_name))
     ref.pop('renamed_from', None)
@@ -567,11 +613,16 @@ def build_mixed(vendor, drafts, layout, model, report):
                 [one_or_all(v) if v else 'unset' for v in vals])))
             continue
         ones = []
-        for tag, value in zip(layout.tools, vals):
+        for pos, (tag, value) in enumerate(zip(layout.tools, vals)):
             if value is None:
                 unexpected.append('%s: the %s preset does not set it while '
                                   'another tool\'s does' % (key, tag))
                 break
+            if key in SEMI_SEPARATED:
+                # Legitimately different per tool (the colours), so take this
+                # tool's own entry rather than demanding a uniform vector.
+                ones.append(element(value, pos, key))
+                continue
             one = uniform(value)
             if one is None:
                 unexpected.append('%s: the %s preset is not uniform across tools '
@@ -580,7 +631,7 @@ def build_mixed(vendor, drafts, layout, model, report):
                 break
             ones.append(one)
         else:
-            cfg[key] = ','.join(ones)
+            cfg[key] = (';' if key in SEMI_SEPARATED else ',').join(ones)
             composed[key] = ones
     if unexpected:
         raise SystemExit(
@@ -594,10 +645,13 @@ def build_mixed(vendor, drafts, layout, model, report):
             % (layout.key, '\n            '.join(unexpected)))
 
     cfg['printer_variant'] = layout.key
-    cfg['default_print_profile'] = layout_balanced_profile(vendor, layout)
+    cfg['default_print_profile'] = balanced
     cfg['default_filament_profile'] = \
         tool_cfgs[layout.base_tool - 1]['default_filament_profile']
     cfg['inherits'] = base_name
+    unset = sorted(k for k in MIXED_SCALAR if k not in cfg)
+    assert not unset, ('MIXED_SCALAR names keys nothing assigns, so they would be '
+                       'dropped from a flattened preset: %s' % unset)
 
     if cfg.get('single_extruder_multi_material') != '0':
         raise SystemExit(
@@ -708,10 +762,18 @@ def main():
     vendor = load(a.prusa_ini)
     drafts = load_drafts(a.prusa_ini)
     version = vendor.get('vendor', {}).get('config_version', '?')
-    if not a.std:
-        for dia in a.nozzle:
-            if dia in NOZZLES and NOZZLES[dia].scaled_from:
-                assert_unsourced(vendor, drafts, dia)   # before any preset is written
+    # Before any preset is written: a scaled size is built only because Prusa
+    # publishes nothing at it, and that holds whether the size is asked for with
+    # -n or merely fitted to one tool of a layout.
+    scaled = [dia for dia in (a.nozzle if not a.std else [])
+              if dia in NOZZLES and NOZZLES[dia].scaled_from]
+    for key in a.layouts:
+        for tag in dict.fromkeys(LAYOUTS[key].tools):
+            dia, high_flow = split_tag(tag)
+            if high_flow and dia in NOZZLES and NOZZLES[dia].scaled_from:
+                scaled.append(dia)
+    for dia in dict.fromkeys(scaled):
+        assert_unsourced(vendor, drafts, dia)
     models = a.model or ['8T']
     os.makedirs(a.outdir, exist_ok=True)
 
@@ -752,6 +814,16 @@ def main():
 
     for key in a.layouts:
         layout = LAYOUTS[key]
+        wrong = sorted({m for m in (a.model or []) if m != layout.model})
+        if wrong:
+            raise SystemExit(
+                'refusing: layout %s is an INDX %s layout and -m names %s.\n'
+                '          A layout declares a nozzle per tool and its print '
+                'profiles bind on\n          those tools by index, so it is tied '
+                'to one tool count; it cannot be\n          truncated or widened '
+                'to another model. A %s arrangement is a\n          separate '
+                'LAYOUTS entry in nozzles.py.'
+                % (layout.key, layout.model, ', '.join(wrong), wrong[0]))
         report = []
         cfg, changed = build_mixed(vendor, drafts, layout, layout.model, report)
         name = 'Prusa CORE One INDX %s %s nozzles' % (layout.model, layout.key)

@@ -279,9 +279,10 @@ COMMON_EDITS = {
 #     role is pinned to one tool, every per-role width and speed key belongs to
 #     exactly one nozzle, and can be taken from that nozzle's own Prusa source.
 #     That is why the widths stay explicit instead of being zeroed to "auto" as
-#     Prusa's article suggests: auto would recompute them as 1.125 x nozzle
-#     (Flow::auto_extrusion_width, Flow.cpp:33) and throw away Prusa's own
-#     tuned figures.
+#     Prusa's article suggests: auto recomputes each one from the nozzle alone -
+#     1.125 x nozzle for perimeters, infill and solid infill, 1.0 x for top
+#     solid infill and for supports (Flow::auto_extrusion_width, Flow.cpp:33-47)
+#     - throwing away Prusa's own tuned figures.
 #   * ExtruderFilaments::update_compatible_internal (Preset.cpp:2404-2415)
 #     copies every per-extruder key's value at tool N into index 0 before
 #     evaluating a filament's compatible_printers_condition, whenever
@@ -290,7 +291,7 @@ COMMON_EDITS = {
 #     repo need no change at all for a mixed layout.
 #   * Print presets get no such adjustment (Preset.cpp:1352-1368): they are
 #     evaluated against the printer as written, so a layout's print profiles
-#     bind on the tools by index, which is what BIND below does. An index past
+#     bind on the tools by index, which is what build_layout() emits. An index past
 #     the end of a vector reads element 0 rather than throwing
 #     (PlaceholderParser.cpp:1074), so testing tool 2 is safe on any printer.
 #
@@ -314,33 +315,95 @@ EXTRUDER_KEYS = frozenset("""
 """.split())
 
 # Print roles PrusaSlicer can pin to a tool, and the width and speed keys that
-# follow each one. The mapping is PrintRegion::extruder (PrintRegion.cpp:22-35)
-# and PrintRegion::flow (PrintRegion.cpp:38-65): gap fill rides the perimeter
-# flow, bridges and top surfaces ride the solid-infill flow. A role left on
-# Prusa's 0 ("current extruder") is not pinned and its keys stay at the base
-# tool's values, which is why a layout must pin every role whose tool it means
-# to change.
+# belong to each one - the keys a role takes with it when a layout moves it to
+# another tool. The mapping is PrintRegion::extruder (PrintRegion.cpp:22-35) and
+# PrintRegion::flow (PrintRegion.cpp:38-65).
+#
+# Only the three main roles are real extruder choices: perimeter_extruder,
+# infill_extruder and solid_infill_extruder each declare min = 1, so none of
+# them can be Prusa's 0 ("whichever tool is loaded"). The two support roles
+# declare min = 0, and Prusa's INDX commons leave them there.
+#
+# Three keys are deliberately NOT listed, so that moving the role that would
+# otherwise carry them refuses instead of guessing:
+#   gap_fill_speed - gap fill is extruded by the perimeter extruder but takes its
+#     width from the SOLID INFILL flow (PerimeterGenerator.cpp:1477), so it
+#     belongs to two roles at once and can follow neither on its own.
+#   bridge_speed - a bridge runs on Flow::bridging_flow, whose width and height
+#     do not come from a width key at all; at the thick_bridges = 0 every INDX
+#     profile ships, they come from the solid-infill spacing.
+#   support_material_interface_extruder has no keys of its own: its width is
+#     support_material_extrusion_width and its speed is a percentage of
+#     support_material_speed, so it cannot be moved away from the support role.
 ROLE_KEYS = {
     'perimeter_extruder': ('perimeter_extrusion_width',
                            'external_perimeter_extrusion_width',
                            'perimeter_speed', 'external_perimeter_speed',
-                           'small_perimeter_speed', 'gap_fill_speed'),
+                           'small_perimeter_speed'),
     'infill_extruder': ('infill_extrusion_width', 'infill_speed'),
     'solid_infill_extruder': ('solid_infill_extrusion_width',
                               'top_infill_extrusion_width',
-                              'solid_infill_speed', 'top_solid_infill_speed',
-                              'bridge_speed'),
+                              'solid_infill_speed', 'top_solid_infill_speed'),
     'support_material_extruder': ('support_material_extrusion_width',
                                   'support_material_speed'),
     'support_material_interface_extruder': (),
 }
 
+# Every key each role owns, by name stem. build_layout() compares all of them
+# between the base profile and the moved tool's anchor, and refuses on any key
+# that differs and is neither transferred (ROLE_KEYS) nor held (ROLE_HELD) - so a
+# per-nozzle figure cannot be left at the base tool's value unnoticed, which is
+# how infill_anchor and infill_acceleration were missed.
+# bridge_ and gap_fill_ are listed under solid infill although ROLE_KEYS
+# deliberately excludes those two speeds: the stem is what makes the exclusion
+# bite. Without it the key matches no role, the gate never sees it, and moving
+# the role would hold it silently - the failure the exclusion exists to prevent.
+# Both sit under solid infill because that is the flow they are computed from
+# (Flow::bridging_flow for bridges, params.solid_infill_flow for gap fill,
+# PerimeterGenerator.cpp:1477), whatever extruder lays them down.
+#
+# The perimeter stems are belt and braces: perimeter_extruder IS the base tool
+# by definition (Layout.base_tool), so that role can never be the moved one.
+ROLE_STEMS = {
+    'perimeter_extruder': ('perimeter_', 'external_perimeter_', 'small_perimeter_'),
+    'infill_extruder': ('infill_',),
+    'solid_infill_extruder': ('solid_infill_', 'top_infill_', 'top_solid_',
+                              'bridge_', 'gap_fill_'),
+    'support_material_extruder': ('support_material_',),
+    'support_material_interface_extruder': (),
+}
+
+# Keys a moved role owns but which are HELD at the base tool's value, per role,
+# each with the reason. Held is a decision, not an oversight: these are the keys
+# the gate above would otherwise refuse.
+ROLE_HELD = {
+    'infill_extruder': {
+        'infill_anchor':
+            'the anchor is the length of infill laid along the perimeter it '
+            "attaches to, and that perimeter is the base tool's, so the base "
+            "tool's figure is the right one. Prusa has 1 mm at 0.25 and 2 mm at "
+            'HF0.4',
+        'infill_anchor_max':
+            'same rule as infill_anchor. Prusa has 12 at both sizes, so holding '
+            'it changes nothing today',
+        'infill_acceleration':
+            "held at the base tool's 3000 where Prusa gives the HF0.4 nozzle "
+            '7000, because acceleration is the one gantry both tools share and '
+            'because the layout was test printed this way. The consequence is '
+            'real and is documented rather than hidden: reaching the solved '
+            'infill speed from rest takes about 15 mm at 3000 mm/s2, so short '
+            'infill moves never get there and the solved rate is a ceiling, not '
+            'an average. Raising it would need a new test print',
+    },
+}
+
+
+
 # Where a role moved onto another tool takes its width and its volumetric rate
 # from: a print profile Prusa itself ships at that nozzle, which carries a
 # width, a layer height and a speed together. The width transfers as written;
 # the speed is re-solved so the rate matches Prusa's at the layout's own
-# geometry (solve_role() in build_print_profiles.py), because the layer height
-# is the base tool's, not this profile's.
+# geometry, because the layer height is the base tool's, not this profile's.
 ROLE_ANCHOR = {
     'HF0.4': ('0.20mm Balanced \u2605 @COREONEINDX HF0.4',
               "Prusa's own starred INDX HF0.4 profile, and the same anchor the "
@@ -433,7 +496,7 @@ def combine_layers(cap, layer):
     """How many layers of sparse infill PrusaSlicer will combine at this layer
     height, given `cap` mm of combined height.
 
-    PrintObject::combine_infill (PrintObject.cpp:3126-3132) caps the combined
+    PrintObject::combine_infill (PrintObject.cpp:3128-3132) caps the combined
     height at the smaller of the infill and solid-infill extruders' nozzle
     diameters, so a layout that keeps solid infill on the small nozzle is
     capped by the small nozzle however large the infill one is. 1 means no
@@ -461,13 +524,29 @@ LAYOUTS = {
         extra={
             'support_material_style': (
                 'organic',
-                'required, not preference: with a wipe tower and non-soluble '
-                'supports, Print.cpp:685-692 rejects the slice outright unless '
-                'the support style is organic once a support extruder is pinned '
-                '(both support extruders must otherwise be 0). Pinning them is '
-                'what keeps support width off the smaller nozzle and silences '
-                '_SUPPORT_NOZZLE_DIAMETER_DIFFER (Print.cpp:675-679). Prusa\'s '
-                'article prescribes the same pair of changes'),
+                'recommended, and a hard requirement only with a wipe tower. '
+                'The rule that would force it - a pinned support extruder with '
+                'non-soluble supports is rejected unless the style is organic '
+                '(gate Print.cpp:681, rejection Print.cpp:688-690) - and the '
+                'dialog that enforces it (ConfigManipulation.cpp:178-180) are '
+                'both reached only when Print::has_wipe_tower() is true '
+                '(Print.cpp:1396-1402); every INDX print profile inherits '
+                "wipe_tower = 0 from Prusa's *INDX_common*, so the INDX purges "
+                'at its Purge Station and neither is reachable as shipped. '
+                'Organic is chosen because PrusaSlicer itself prescribes this '
+                'exact pair for mixed nozzles - "switch to Organic supports and '
+                'assign a specific extruder for supports" '
+                '(Plater.cpp:2335-2348) - because Prusa article 821176 '
+                'recommends it, because it keeps the slice legal if a user '
+                'switches a tower on, and because the layout was test printed '
+                'with it. It costs one restriction: an object with a varying '
+                'layer-height profile cannot be sliced with organic supports '
+                '(Print.cpp:548-554). Pinning the support extruders is a '
+                'separate decision and does NOT change the support width - at 0 '
+                'the support flow already falls back to the smallest fitted '
+                'nozzle (Flow.cpp:245-252), the same 0.25 - but it is what '
+                'silences _SUPPORT_NOZZLE_DIAMETER_DIFFER, whose condition tests '
+                'only those two keys (Print.cpp:675-679)'),
         },
         # Test printed on an INDX 8T with a 0.25 standard nozzle on tool 1 and
         # a 0.4 high-flow CHT on tool 2, reported 2026-10-24. Composition is
