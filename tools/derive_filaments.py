@@ -179,6 +179,58 @@ def sized_common(S, family):
     return inh[via[0]]
 
 
+def after_family(S, name, fam04):
+    """Refuse if anything that overrides the 0.4 family of preset `name` sets an
+    INDX toolchanger key (a *C1INDX_common* or COMMON_ADOPT key).
+
+    sized_common() checks the family section itself; this checks the path above
+    it. In PrusaSlicer's chain a later parent overrides an earlier one and a
+    section's own body overrides all its parents, so on every level from the
+    preset down to its family, a parent listed after the step toward the family
+    would replace the sized common's value, as would the own body of a wrapper
+    section the path passes through. Neither reaches the common, so neither is
+    visible to sized_common(), and the value would be emitted and credited to
+    the concrete preset as its own override - the misattribution the standard
+    path already refuses in after_base().
+
+    Two bodies are exempt. The preset's own body is its own override by design.
+    So is the body of another `@COREONEINDX HF0.4` preset the path passes
+    through (Prusa's own chain does this: Fiberlogy BVOH and Generic PVA both
+    inherit Verbatim BVOH @COREONEINDX HF0.4), because that body is itself an
+    INDX HF0.4 preset's own override and is derived in its own right.
+    """
+    toolchanger = set(resolve(S, 'filament:' + COMMON)) | set(COMMON_ADOPT)
+
+    def walk(sec):
+        inh = inherits(S, 'filament:' + sec)
+        via = [i for i, p in enumerate(inh)
+               if p == fam04 or fam04 in parents(S, 'filament:' + p)]
+        if not via:
+            return
+        within = '' if sec == name else ' (within %s)' % sec
+        for p in inh[via[-1] + 1:]:
+            hit = sorted(set(resolve(S, 'filament:' + p)) & toolchanger)
+            if hit:
+                sys.exit('refusing: %s inherits %s after its 0.4 family %s%s, and %s sets '
+                         'INDX toolchanger key(s) %s, which would override the sized '
+                         'common; review it first'
+                         % (name, p, fam04, within, p, ', '.join(hit)))
+        step = inh[via[-1]]
+        if step == fam04:
+            return
+        if not step.endswith(INDX_SUFFIX):
+            hit = sorted({k for k in S['filament:' + step] if k != 'inherits'}
+                         & toolchanger)
+            if hit:
+                sys.exit('refusing: %s reaches its 0.4 family %s through %s, whose own body '
+                         'sets INDX toolchanger key(s) %s, which would override the sized '
+                         'common; review it first'
+                         % (name, fam04, step, ', '.join(hit)))
+        walk(step)
+
+    walk(name)
+
+
 def common_delta(S, sec):
     """{key: (shared value, per-nozzle value)} for the keys the per-nozzle common
     `sec` changes from *C1INDX_common*; empty for COMMON itself. Refuses if `sec`
@@ -420,6 +472,7 @@ def main():
         # 0.4 family and anything inherited before it give way; a value the 0.4
         # preset sets in its own body survives, as an own override always does.
         fam04, fam = family_at(S, mat, src)
+        after_family(S, mat + INDX_SUFFIX, fam04)
         common_sec = sized_common(S, fam)
         if common_sec not in commons:
             commons[common_sec] = (common_delta(S, common_sec), collections.OrderedDict(), [])

@@ -341,6 +341,7 @@ renamed_from = "Original Prusa CORE One 0.4 nozzle"
 printer_model = COREONE_INDX8T
 nozzle_diameter = 0.4,0.4
 nozzle_high_flow = 1,1
+retract_length = 0.8,0.8
 default_print_profile = 0.20mm Balanced @COREONEINDX HF0.4
 default_filament_profile = "Prusament PLA @COREONEINDX HF0.4"
 renamed_from = "Original Prusa CORE One INDX 8T"
@@ -672,6 +673,7 @@ top_infill_extrusion_width = 0.25
 support_material_extrusion_width = 0.25
 perimeter_speed = 150
 infill_speed = 100
+infill_acceleration = 3000
 solid_infill_speed = 140
 support_material_speed = 70
 layer_height = 0.1
@@ -814,8 +816,9 @@ class LayoutPrintProfiles(Tool):
         out = self.build(VENDOR, PRINT_025, ANCHOR_HF04)
         header = out[:out.index('[print:*COREONEINDX')]
         for needle in ('Preset.cpp:1388-1401',      # why the tiers are renamed
-                       'Print.cpp:685-692',          # why supports are organic
-                       'PrintObject.cpp:3126-3132',  # why infill combines this far
+                       'Print.cpp:1396-1402',        # why organic is not forced
+                       'Flow.cpp:245-252',           # why pinning does not move the width
+                       'PrintObject.cpp:3128-3132',  # why infill combines this far
                        'PlaceholderParser.cpp:1074'):  # why a tool-2 clause is safe
             self.assertIn(needle, header)
 
@@ -977,3 +980,196 @@ class LayoutTableGuards(unittest.TestCase):
         self.assertAlmostEqual(self.build.combine_cap(layout), 0.25)
         self.assertEqual([self.nozzles.combine_layers(0.25, h)
                           for h in (0.07, 0.1, 0.15)], [3, 2, 1])
+
+# --- the 2026-10-25 audit: refusals added for each confirmed finding --------
+
+class DraftIntroducedKeys(Tool):
+    """build_printer_preset.py: a key Prusa types only in a commented INDX
+    printer draft reaches no review gate, so it must refuse rather than be
+    dropped to PrusaSlicer's compiled default."""
+
+    HF06_DRAFT = '''
+    ; [printer:Prusa CORE One INDX 8T HF0.6 nozzle]
+    ; inherits = Prusa CORE One INDX 8T HF0.4 nozzle
+    ; nozzle_diameter = 0.6,0.6
+    ; retract_length = 0.7,0.7
+    %s
+    '''
+
+    def run_hf(self, extra=''):
+        text = ini(VENDOR, PRINTERS.replace(
+            '; [printer:Prusa CORE One INDX 8T 0.25 nozzle]',
+            textwrap.dedent(self.HF06_DRAFT % extra).strip()
+            + '\n\n; [printer:Prusa CORE One INDX 8T 0.25 nozzle]'))
+        return self.run_tool('build_printer_preset.py', text, '-n', '0.6',
+                             out='printer')
+
+    def test_a_draft_key_the_base_lacks_refuses(self):
+        r = self.run_hf('; between_objects_gcode = G28 X')
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn('sets keys the HF0.4 base does', r.stderr)
+        self.assertIn('between_objects_gcode = G28 X', r.stderr)
+        self.assertIn('DRAFT_ADOPT', r.stderr)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.out, 'Prusa CORE One INDX 8T HF0.6 nozzle.ini')),
+            'a refusal must write no preset')
+
+    def test_a_draft_that_introduces_nothing_still_builds(self):
+        r = self.run_hf()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.out,
+                               'Prusa CORE One INDX 8T HF0.6 nozzle.ini'),
+                  encoding='utf-8') as f:
+            self.assertIn('retract_length = 0.7,0.7', f.read())
+
+
+class HighFlowFamilyOverrides(Tool):
+    """derive_filaments.py: the standard path refuses a parent or wrapper that
+    overrides the INDX base on the way to the preset (after_base); the high-flow
+    path must refuse the same shape around the sized family (after_family)."""
+
+    def material(self, inherits_line, extra_sections=''):
+        return ini(VENDOR, INDX_COMMON,
+                   '''
+                   [filament:*C1INDX_06_common*]
+                   inherits = *C1INDX_common*
+                   filament_minimal_purge_on_wipe_tower = 14
+                   ''',
+                   '''
+                   [filament:*PLAHFC1INDX*]
+                   inherits = *C1INDX_common*
+                   compatible_printers_condition = %s
+                   ''' % COND_HF04,
+                   '''
+                   [filament:*PLA06HFC1INDX*]
+                   inherits = *C1INDX_06_common*
+                   ''',
+                   '[filament:Prusament PLA @COREONE HF0.4]\n'
+                   'filament_max_volumetric_speed = 24',
+                   '[filament:Prusament PLA @COREONE HF0.6]\n'
+                   'filament_max_volumetric_speed = 34',
+                   '''
+                   [filament:Prusament PLA @COREONEINDX HF0.4]
+                   inherits = %s
+                   filament_max_volumetric_speed = 28
+                   start_filament_gcode = "M572 S0.038"
+                   ''' % inherits_line,
+                   extra_sections)
+
+    def test_a_later_parent_overriding_the_sized_common_refuses(self):
+        text = self.material('*PLAHFC1INDX*; *LATER*', '''
+            [filament:*LATER*]
+            filament_minimal_purge_on_wipe_tower = 99
+            ''')
+        self.assertRefuses(
+            self.run_tool('derive_filaments.py', text, '-n', '0.6'),
+            'inherits *LATER* after its 0.4 family *PLAHFC1INDX*',
+            'filament_minimal_purge_on_wipe_tower')
+
+    def test_a_wrapper_body_overriding_the_sized_common_refuses(self):
+        text = self.material('*WRAP*', '''
+            [filament:*WRAP*]
+            inherits = *PLAHFC1INDX*
+            filament_minimal_purge_on_wipe_tower = 99
+            ''')
+        self.assertRefuses(
+            self.run_tool('derive_filaments.py', text, '-n', '0.6'),
+            'through *WRAP*, whose own body sets INDX toolchanger key(s)',
+            'filament_minimal_purge_on_wipe_tower')
+
+    def test_a_clean_chain_still_builds(self):
+        out = self.assertBuilds(self.run_tool(
+            'derive_filaments.py', self.material('*PLAHFC1INDX*'), '-n', '0.6'))
+        self.assertIn('[filament:Prusament PLA @COREONEINDX HF0.6]', out)
+        self.assertIn('filament_minimal_purge_on_wipe_tower = 14', out)
+
+
+class LayoutModelFlag(Tool):
+    """build_printer_preset.py: a layout names a nozzle per tool and binds on
+    those tools by index, so an explicit -m that names another model cannot be
+    honoured and must not be ignored either."""
+
+    def test_a_conflicting_model_refuses(self):
+        text = ini(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025, indx_8t(),
+                   DRAFT_025)
+        r = self.run_tool('build_printer_preset.py', text, '--layout',
+                          '0.25+HF0.4', '-m', '4T', out='printer')
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn('is an INDX 8T layout and -m names 4T', r.stderr)
+        self.assertIn('separate LAYOUTS entry', r.stderr)
+        self.assertFalse(os.listdir(self.out) if os.path.isdir(self.out) else [],
+                         'a refusal must write no preset')
+
+    def test_the_matching_model_is_accepted(self):
+        text = ini(VENDOR, PRINT_025, ANCHOR_HF04, PRINTERS_025, indx_8t(),
+                   DRAFT_025)
+        r = self.run_tool('build_printer_preset.py', text, '--layout',
+                          '0.25+HF0.4', '-m', '8T', out='printer')
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class LayoutRoleOwnership(Tool):
+    """build_print_profiles.py: every key a moved role owns must be transferred
+    with it or held with a reason, and a role that owns nothing cannot move."""
+
+    def test_a_held_key_is_recorded_with_its_reason(self):
+        # Prusa gives the HF0.4 nozzle its own infill acceleration. The layout
+        # keeps the base tool's, so the artifact must say so and say why.
+        text = ini(VENDOR, PRINT_025,
+                   ANCHOR_HF04.rstrip() + '\ninfill_acceleration = 7000\n')
+        out = self.assertBuilds(self.run_tool(
+            'build_print_profiles.py', text, '--layout', '0.25+HF0.4'))
+        self.assertIn("Held at the base tool's value", out)
+        self.assertIn('infill_acceleration: 3000', out)
+        self.assertIn('would need a new test print', out)
+
+    def test_an_owned_key_in_neither_table_refuses(self):
+        # A per-nozzle figure the moved role owns, transferred by nothing and
+        # held by nothing, must stop the build rather than stay behind unseen.
+        text = ini(VENDOR, PRINT_025,
+                   ANCHOR_HF04.rstrip() + '\ninfill_overlap = 15%\n')
+        self.assertRefuses(
+            self.run_tool('build_print_profiles.py', text, '--layout',
+                          '0.25+HF0.4'),
+            'moves infill_extruder onto tool 2', 'infill_overlap',
+            'ROLE_KEYS', 'ROLE_HELD')
+
+    def test_a_role_that_owns_nothing_cannot_move(self):
+        import copy
+        sys.path.insert(0, TOOLS)
+        self.addCleanup(lambda: sys.path.remove(TOOLS))
+        import nozzles, build_print_profiles
+        layout = copy.deepcopy(nozzles.LAYOUTS['0.25+HF0.4'])
+        layout.roles['support_material_interface_extruder'] = 2
+        with self.assertRaises(SystemExit) as caught:
+            build_print_profiles.build_layout({}, layout, [], [])
+        self.assertIn('owns no', str(caught.exception))
+        self.assertIn('support_material_interface_extruder -> tool 2',
+                      str(caught.exception))
+
+
+class UnsourcedVectorScan(unittest.TestCase):
+    """build_print_profiles.assert_unsourced: the HF1.0 premise must be checked
+    against every tool of a printer's nozzle vector, not just the first."""
+
+    def setUp(self):
+        sys.path.insert(0, TOOLS)
+        self.addCleanup(lambda: sys.path.remove(TOOLS))
+        import build_print_profiles
+        self.b = build_print_profiles
+
+    def fitted(self, vector):
+        return {'printer:Some mixed printer': {'nozzle_diameter': vector}}
+
+    def test_the_size_on_a_later_tool_refuses(self):
+        for vector in ('1.0,0.4,0.4', '0.4,1.0,0.4', '0.4,0.4,1', '0.4, 1.0'):
+            with self.assertRaises(SystemExit, msg=vector) as caught:
+                self.b.assert_unsourced(self.fitted(vector), {}, '1.0')
+            self.assertIn('has a 1.0 mm nozzle', str(caught.exception), vector)
+
+    def test_a_printer_without_the_size_is_silent(self):
+        self.b.assert_unsourced(self.fitted('0.4,0.6,0.8'), {}, '1.0')
+
+    def test_a_commented_draft_is_scanned_too(self):
+        with self.assertRaises(SystemExit):
+            self.b.assert_unsourced({}, self.fitted('0.4,1.0'), '1.0')

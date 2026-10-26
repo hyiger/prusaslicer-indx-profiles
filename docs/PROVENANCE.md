@@ -353,7 +353,8 @@ can and cannot be, and all four were read out of `version_2.9.6`:
   a role is pinned to one tool, every per-role width and speed key belongs to
   exactly one nozzle and can be taken from that nozzle's own Prusa source. This
   is why the widths stay explicit here, where Prusa's article says to zero them:
-  auto width would recompute every one as 1.125 × nozzle
+  auto width would recompute each from the nozzle alone — 1.125 × nozzle for
+  perimeters, infill and solid infill, 1.0 × for top solid infill and supports —
   (`Flow::auto_extrusion_width`, `Flow.cpp:33`) and discard Prusa's tuned
   figures. A role left at Prusa's `0`, "whichever tool is loaded", has no
   knowable nozzle, so a layout must pin every role it means to move.
@@ -375,14 +376,29 @@ can and cannot be, and all four were read out of `version_2.9.6`:
   vector reads element 0 instead of throwing
   (`PlaceholderParser.cpp:1074`), so a clause on tool 2 is safe to evaluate on a
   single-extruder printer; it simply compares tool 1 with itself and fails.
-- **Pinning supports requires organic supports.** With a wipe tower and
+- **Organic supports are recommended, not forced.** With a wipe tower and
   non-soluble supports, `Print::validate` rejects the slice unless both support
-  extruders are `0` — *except* when the style is organic, which skips that whole
-  branch (`Print.cpp:685-692`). Pinning supports is also what silences
-  `_SUPPORT_NOZZLE_DIAMETER_DIFFER` (`Print.cpp:675-679`). Prusa's article
-  prescribes exactly this pair of changes; `Layout.extra` records it with that
-  reason. Mixed diameters under a wipe tower are otherwise only a warning,
-  `_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER` (`Print.cpp:567`), never an error.
+  extruders are `0` — *except* when the style is organic, which skips that
+  branch (gate `Print.cpp:681`, rejection `Print.cpp:688-690`). But that gate,
+  and the dialog that enforces the same rule (`ConfigManipulation.cpp:178-180`),
+  are reached only when `Print::has_wipe_tower()` is true
+  (`Print.cpp:1396-1402`), and **every INDX print profile inherits
+  `wipe_tower = 0`** from Prusa's `*INDX_common*`. So nothing forces organic as
+  shipped, and `_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER` (`Print.cpp:567`) cannot
+  fire either: the INDX purges at its Purge Station. Organic is chosen because
+  PrusaSlicer itself prescribes exactly this pair for mixed nozzles — "switch to
+  Organic supports and assign a specific extruder for supports"
+  (`Plater.cpp:2335-2348`) — because Prusa's article recommends it, because it
+  keeps the slice legal if a user switches a tower on, and because the layout
+  was test printed with it. It costs one restriction: an object with a varying
+  layer-height profile cannot be sliced with organic supports
+  (`Print.cpp:548-554`).
+- **Pinning the support extruders is a separate decision, and does not move the
+  support width.** It silences `_SUPPORT_NOZZLE_DIAMETER_DIFFER`
+  (`Print.cpp:675-679`), whose condition tests only those two keys. It does not
+  change the width: at `0`, `support_material_flow` already falls back to
+  `min_nozzle_diameter()`, the smallest nozzle fitted (`Flow.cpp:245-252`) —
+  the same 0.25 here. `Layout.extra` records both halves.
 
 #### The printer preset
 
@@ -468,14 +484,29 @@ works through `Flow::bridging_flow`, whose width and height both come from the
 nozzle rather than from a width key.
 
 `infill_every_layers` is set per tier to the most PrusaSlicer will actually
-combine: `PrintObject::combine_infill` (`PrintObject.cpp:3126-3132`) caps the
+combine: `PrintObject::combine_infill` (`PrintObject.cpp:3128-3132`) caps the
 combined height at the **smaller of the infill and solid-infill extruders'
 nozzles**, so keeping top surfaces on the 0.25 tool caps combining at 0.25 mm
-however big the infill nozzle is. The second term of the cap is PrusaSlicer's own
-default ceiling for a nozzle's layer height, 0.75 × diameter (`Slicing.cpp:48`).
-That gives 3 layers at 0.07, 2 at 0.10 and 1 — no combining — at 0.15. Combining
-also cuts the tool changes a split role costs from one pair per layer to one pair
-per group, which is most of why it is worth doing.
+however big the infill nozzle is. With a manual `infill_every_layers` that is
+the whole of PrusaSlicer's limit. `combine_cap()` applies a second term of its
+own — 0.75 × the infill nozzle, the value PrusaSlicer defaults
+`max_layer_height` to when a printer leaves it unset (`Slicing.cpp:48`) — so a
+combined extrusion is never taller than that nozzle is asked to lay down
+anywhere else. That term is this repo's choice, not PrusaSlicer's, and it does
+not bind here (0.75 × 0.4 = 0.3, against the 0.25 cap). The result is 3 layers
+at 0.07, 2 at 0.10 and 1 — no combining — at 0.15. Combining also cuts the tool
+changes a split role costs from one pair per layer to one pair per group, which
+is most of why it is worth doing.
+
+Two keys the moved role owns are **held** at the base tool's value, and
+`build_layout()` refuses on any third one that appears: `infill_anchor` (1 mm
+here, 2 at Prusa's HF0.4), because the anchor runs along the base tool's own
+perimeter, and `infill_acceleration` (3000 against Prusa's 7000), because
+acceleration is the one gantry both tools share and because that is what was
+test printed. The second has a visible consequence: reaching 300 mm/s from rest
+takes about 15 mm at 3000 mm/s², so the solved rate is a ceiling that short
+infill moves do not reach. Both are listed in the bundle header with these
+reasons (`ROLE_HELD`, and `ROLE_STEMS` is what makes the refusal general).
 
 The binding tests only the tools the layout prints with:
 
@@ -629,8 +660,8 @@ has no draft for.
 
 ### Other sizes and the 4T
 
-Only the 8T is committed, at HF0.6, HF0.8, HF1.0, 0.4 and 0.25. Generate
-others with, for example:
+Only the 8T is committed: HF0.6, HF0.8, HF1.0, 0.4, 0.25 and the `0.25+HF0.4`
+mixed layout. Generate others with, for example:
 
 ```bash
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.5 -m 4T
@@ -642,9 +673,18 @@ Each one names every key it changed and where the value came from, and says
 loudly if the size has never been test printed. `default_print_profile` is built
 from the same layer ladder `build_print_profiles.py` emits from, so it names a
 profile that is in the bundle once `build_print_profiles.py` has been run with
-the same `-n` (the committed bundle holds only HF0.6, HF0.8, HF1.0 and standard 0.4; see
-[Adding a nozzle size](#adding-a-nozzle-size)). At 0.5 that is
-`0.20mm Balanced ★ @COREONEINDX HF0.5`, not the `0.25mm` of the 0.6 lineup.
+the same `-n` (the committed bundle holds HF0.6, HF0.8, HF1.0, standard 0.4 and
+the `0.25+HF0.4` layout; see [Adding a nozzle size](#adding-a-nozzle-size)). At
+0.5 that is `0.20mm Balanced ★ @COREONEINDX HF0.5`, not the `0.25mm` of the 0.6
+lineup.
+
+`-m 4T` applies to `-n` sizes only. A layout declares a nozzle per tool and its
+print profiles bind on those tools by index, so it is tied to one tool count:
+`--layout` with a conflicting `-m` refuses rather than writing an 8-tool preset
+under a 4T name. A four-tool arrangement is a separate `LAYOUTS` entry, and its
+print profiles would need their own binding; the `0.25+HF0.4` profiles already
+accept a 4T printer, because the `printer_model` clause they keep from Prusa
+names both models.
 
 ### Setting a printer up by hand, every size
 
@@ -721,10 +761,12 @@ python3 tools/build_print_profiles.py <PrusaResearch.ini> /dev/null --list
 Prusa renamed the high-flow commons (`*INDX_06_common*` became
 `*INDX_06hf_common*`) by PrusaResearch 2.5.11.
 
-To build more than one size into the bundle:
+To build more than one size into the bundle — and note that the bundle is
+**replaced**, not merged, so every command that writes `vendor/hyigerINDX.ini`
+has to name every family it should still contain, the `--layout` included:
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.5 -n 0.6 -n 0.8 -n 1.0 --std 0.4
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.5 -n 0.6 -n 0.8 -n 1.0 --std 0.4 --layout 0.25+HF0.4
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.5
 python3 tools/derive_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.5-filaments.ini -n 0.5
 ```
@@ -761,7 +803,7 @@ high-flow pair, and Prusa publishes none below 0.4, so it refuses 0.25 and 0.3.
 ### Standard nozzles
 
 ```bash
-python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4
+python3 tools/build_print_profiles.py <PrusaResearch.ini> vendor/hyigerINDX.ini -n 0.6 -n 0.8 -n 1.0 --std 0.4 --layout 0.25+HF0.4
 python3 tools/build_printer_preset.py <PrusaResearch.ini> printer/ -n 0.4 -n 0.25 --std
 python3 tools/derive_std_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.4-filaments.ini -n 0.4
 python3 tools/derive_std_filaments.py <PrusaResearch.ini> filaments/hyigerINDX-0.25-filaments.ini -n 0.25
@@ -897,11 +939,12 @@ The README lists these in short. Here is each one in full.
   tool 2), but Prusa warns that some nozzle combinations can fail, and this repo
   carries only that one pair. Every value in it is Prusa's own except
   `infill_speed`, which is solved from the 24.4 mm³/s Prusa's own starred HF0.4
-  profile runs infill at. Two consequences of the role split are worth knowing: a
-  wipe-tower purge per tool change, which infill combining reduces but does not
-  remove, and
-  PrusaSlicer's standing warning that a wipe tower with differing nozzle
-  diameters is experimental (`_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER`). The layout's
+  profile runs infill at — a ceiling, since `infill_acceleration` is held at the
+  base tool's 3000. The role split costs a purge per tool change, which infill
+  combining reduces but does not remove; it goes to the printer's Purge Station,
+  not to a wipe tower, because every INDX profile ships `wipe_tower = 0`, which
+  is also why `_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER` never fires as shipped. The
+  layout's
   profiles also carry Prusa's upstream `top solid_infill_speed` typo as written,
   so top solid infill runs at the inherited 100 mm/s rather than the 60 Prusa
   evidently meant — the same as on the plain 0.25 setup, which was test printed

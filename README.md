@@ -186,10 +186,15 @@ different pair is new ground even though this one works.
 | Sparse infill | 2 (HF0.4) | the one role where the CHT pays for the tool changes |
 | Supports and support interfaces | 1 (0.25) | support width follows the smaller nozzle anyway, and pinning it is what keeps the wipe tower working |
 
-Every role is pinned, so nothing is printed by "whichever tool is loaded". The
-profiles switch supports to **Organic**, which is required rather than a
-preference: with a wipe tower and non-soluble supports, PrusaSlicer rejects the
-slice outright if a support extruder is pinned and the style is not organic.
+Every role is pinned, so no role follows "whichever tool is loaded" — which for
+supports is Prusa's own default. The profiles also switch supports to
+**Organic**. That is PrusaSlicer's own recommendation for mixed nozzles, and it
+keeps the slice legal if you ever switch a wipe tower on, where a pinned support
+extruder with non-organic supports is rejected outright. With the tower off, as
+every INDX profile ships it, nothing forces it. Pinning the support extruders
+does not change the support width either way: left at 0, support flow already
+falls back to the smallest nozzle fitted. The one thing Organic costs is that an
+object with a varying layer-height profile cannot be sliced with it.
 
 Sparse infill runs at 0.45 mm wide, Prusa's own HF0.4 width, and is combined
 across layers up to 0.25 mm of height — the most PrusaSlicer will combine here,
@@ -208,8 +213,15 @@ Speeds in mm/s. The perimeter, solid and support speeds are Prusa's own
 (11/9, 9/7 and 6/5 top/bottom). Only the infill speed is this repo's, solved so
 the rate matches the 24.4 mm³/s Prusa's own starred `0.20mm Balanced ★
 @COREONEINDX HF0.4` runs infill at, and never faster than that profile's own
-300 mm/s. For comparison, Prusa's 0.25 profiles run infill at 2.4 mm³/s — the
-whole point of the exercise.
+300 mm/s. For comparison, Prusa's own 0.25 profiles run infill at 1.8, 2.5 and
+3.6 mm³/s at the same three layer heights — the whole point of the exercise.
+
+The infill rate is a ceiling, not an average. Infill acceleration stays at the
+0.25 profile's 3000 mm/s² where Prusa gives the HF0.4 nozzle 7000, because
+acceleration is the one gantry both tools share and because that is what was
+test printed. Reaching 300 mm/s from rest takes about 15 mm at 3000 mm/s², so
+short infill moves never get there. The bundle header records this, with the
+other value held the same way (`infill_anchor`).
 
 ### Setting it up
 
@@ -238,14 +250,25 @@ Settings → Extruder N**, with different values per tool:
 | Max layer height | 0.15 | 0.3 |
 | Min layer height | 0.05 | 0.07 |
 | Retraction length | 0.7 | 0.8 |
+| Lift height | 0.15 | 0.2 |
 
 Everything else is the same on every tool (retraction 40 / deretraction 30,
-wipe off). PrusaSlicer only forces the nozzles to match on a single-extruder
-multimaterial printer, which the INDX is not, so these stay as you set them.
+wipe off). Lift height is in the table for completeness only: Prusa's INDX turns
+on **Use ramping lift** on every tool, which grays that field out, so the value
+has no effect — see the note under [Install](#2-install-the-printer-preset).
+PrusaSlicer only forces the nozzles to match on a single-extruder multimaterial
+printer, which the INDX is not, so these stay as you set them.
 Then set the roles in **Print Settings → Multiple Extruders → Extruders**:
 perimeters 1, infill 2, solid infill 1, support and support interface 1; switch
 supports to Organic under **Support material**; and set **Combine infill every**
 per the table above.
+
+That alone will not reproduce the infill rates in that table, because the two
+keys the layout actually derives are not role assignments. Under **Print
+Settings → Advanced** set **Infill** extrusion width to **0.45** (Prusa's own
+HF0.4 width), and under **Speed** set **Infill** to the per-tier figure from the
+table. Without both, the 0.4 tool prints 0.27 mm infill lines at 100 mm/s — the
+0.25 nozzle's settings on a nozzle half again as wide.
 
 ### Two things to know
 
@@ -254,9 +277,12 @@ per the table above.
   (`nozzle_diameter[0]==0.25`). They are perfectly valid, but they print
   *everything* with tool 1 and ignore the CHT. The `0.25+HF0.4` profiles are the
   mixed ones.
-- **Tool changes cost purge and time.** Splitting a role across tools means a
-  wipe-tower purge per change. PrusaSlicer also warns that a wipe tower with
-  different nozzle diameters is experimental; that warning is expected here.
+- **Tool changes cost purge and time**, but not at a wipe tower. Every INDX
+  print profile inherits `wipe_tower = 0` from Prusa, so the toolchange G-code
+  takes its Purge Station branch instead, and combining infill is what keeps the
+  number of changes down. If you do switch a wipe tower on, PrusaSlicer warns
+  that a tower with different nozzle diameters is experimental, and supports then
+  have to stay Organic — see below.
 
 ## Verify
 
@@ -355,7 +381,9 @@ Every number is a starting point. Calibrate in this order:
   deletes your file (a copy stays in the configuration snapshot PrusaSlicer
   takes before updating), and a new Prusa printer stays hidden until you enable
   it in the Configuration Wizard. Save your own edits under a different name.
-- **The files in `personal/` don't import as a config bundle**; see
+- **The files in `personal/` must be imported, not copied.** They import
+  normally through File → Import → Import Config Bundle; copying one into the
+  `filament` folder unchanged silently applies none of its keys. See
   [personal/README.md](personal/README.md).
 
 More on each, and the smaller ones, in

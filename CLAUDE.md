@@ -130,8 +130,10 @@ LICENSE                    AGPL-3.0, this repo's own work only
 each one is an export from the user's own Filament DB app, as its first line
 says. Non-negotiable 5 still applies, but the generator is that app — a fix
 belongs in its exporter, never in the committed file. They also carry two keys
-PrusaSlicer does not define, so they cannot be imported as a config bundle; see
-`personal/README.md`.
+PrusaSlicer does not define, which it silently drops on import
+(`handle_legacy`, see the bundle-key behavior below), so they import normally -
+what breaks is copying one into `<datadir>/filament/` with its section header;
+see `personal/README.md`.
 
 Generated artifacts **are** committed. Users download and import them; requiring
 a local `PrusaResearch.ini` plus Python to get a usable file would defeat the
@@ -330,8 +332,9 @@ holds.
   `solid_infill_extruder` (`PrintRegion.cpp:22-35`). Pin a role to one tool and
   every per-role width and speed key belongs to exactly one nozzle — which is
   what lets a mixed layout keep explicit widths where Prusa's article says to
-  zero them (auto would be 1.125 × nozzle, `Flow::auto_extrusion_width`,
-  `Flow.cpp:33`). A role left at `0` has no knowable nozzle.
+  zero them (auto is role-dependent: 1.125 × nozzle for perimeters, infill and
+  solid infill, 1.0 × for top solid infill and supports —
+  `Flow::auto_extrusion_width`, `Flow.cpp:33-47`). A role left at `0` has no knowable nozzle.
 - **Filament compatibility is evaluated per extruder, print compatibility is
   not.** `ExtruderFilaments::update_compatible_internal` (`Preset.cpp:2404-2415`)
   copies every per-extruder key's value at tool N into index 0 before evaluating
@@ -357,8 +360,17 @@ holds.
   (`Print.cpp:675-679`). The hard rule: with a wipe tower and non-soluble
   supports, `Print::validate` **rejects** the slice unless both support
   extruders are `0` — except when `support_material_style` is organic, which
-  skips that branch entirely (`Print.cpp:685-692`). Pinning supports therefore
-  forces organic supports. Layer height must also be ≤ the smallest *used*
+  skips that branch entirely (gate `Print.cpp:681`, rejection
+  `Print.cpp:688-690`). **That gate is unreachable on an INDX as shipped**:
+  `Print::has_wipe_tower()` requires `wipe_tower.value` (`Print.cpp:1396-1402`)
+  and every INDX print profile inherits `wipe_tower = 0` from
+  `*INDX_common*`, so the printer purges at its Purge Station,
+  `_WIPE_TOWER_NOZZLE_DIAMETER_DIFFER` cannot fire, and organic supports are a
+  recommendation (`Plater.cpp:2335-2348`, and Prusa's article) rather than a
+  requirement. Pinning the support extruders silences
+  `_SUPPORT_NOZZLE_DIAMETER_DIFFER` but does **not** change the support width:
+  at `0`, `support_material_flow` already falls back to the smallest nozzle
+  fitted (`Flow.cpp:245-252`). Layer height must also be ≤ the smallest *used*
   nozzle, and `first_layer_height` likewise (`Print.cpp:735-741`).
 - **Per-extruder layer-height limits do not constrain a profile's layer
   height.** `SlicingParameters::create_from_config` widens them to include it
@@ -366,10 +378,12 @@ holds.
   only. PrusaSlicer's default ceiling, when `max_layer_height` is 0, is
   0.75 × nozzle (`Slicing.cpp:48`).
 - **Infill combining is capped by the smaller of two nozzles.**
-  `PrintObject::combine_infill` (`PrintObject.cpp:3126-3132`) caps the combined
+  `PrintObject::combine_infill` (`PrintObject.cpp:3128-3132`) caps the combined
   height at `min(nozzle[infill_extruder], nozzle[solid_infill_extruder])`, so
   keeping solid infill on a small nozzle caps combining at that nozzle however
-  big the infill one is. `automatic_infill_combination` (2.9.6) caps at
+  big the infill one is. With a manual `infill_every_layers` that is the whole
+  of PrusaSlicer's limit; the 0.75 × nozzle term in `combine_cap()` is this
+  repo's own ceiling, taken from `Slicing.cpp:48`, and does not bind today. `automatic_infill_combination` (2.9.6) caps at
   `min(automatic_infill_combination_max_layer_height, nozzle)`, defaulting to
   100% of the nozzle, so it is no more permissive — and its per-region layer
   count is not knowable in advance, which is why layouts set
@@ -396,8 +410,10 @@ holds.
   `UnknownOptionException` derives from `ConfigurationError`, so a throw there
   would abort the whole bundle (`PresetBundle.cpp:1609, 1623-1624`). It never
   gets that far: `PrintConfigDef::handle_legacy` clears any key the config
-  definition does not have (`PrintConfig.cpp:5383-5386`) and `set_deserialize`
-  returns early on an empty key. That is why Prusa's own misspelled
+  definition does not have (`PrintConfig.cpp:5377-5380`, a catch-all after the
+  `PrintConfigDef_ignore` list at 5372) and `set_deserialize_nothrow` returns
+  early on an empty key (`Config.cpp:484-495`), before the throw at
+  `Config.cpp:531` is reachable. That is why Prusa's own misspelled
   `top solid_infill_speed` in `*INDX_025_common*` is harmless, and why copying
   it verbatim into a layout's profiles is too.
 - **Vendor bundles may omit keys.** Anything the chain doesn't set falls back to
@@ -720,7 +736,7 @@ different layout, not the same one.
 - **Infill combining on `0.25+HF0.4` is capped by the 0.25 nozzle, not the
   0.4.** `PrintObject::combine_infill` caps the combined height at the smaller of
   the infill and **solid-infill** extruders' nozzles
-  (`PrintObject.cpp:3126-3132`), and the layout keeps solid infill and top
+  (`PrintObject.cpp:3128-3132`), and the layout keeps solid infill and top
   surfaces on the 0.25 tool for surface quality. So the cap is 0.25 mm: 3 layers
   at 0.07, 2 at 0.10, 1 — no combining at all — at 0.15. Putting solid infill on
   the 0.4 tool would raise the cap and lower the top-surface quality; that was
@@ -740,8 +756,8 @@ different layout, not the same one.
 - **A layout's printer preset writes one `default_filament_profile`, not one per
   tool.** It is a per-extruder key, but
   `ExtruderFilaments::update_compatible_internal` skips exactly this key when it
-  shifts a tool's values into index 0 (`Preset.cpp:2407-2409`), so entries past
-  the first would be written and never read. `MIXED_SCALAR` records that.
+  shifts a tool's values into index 0 (`Preset.cpp:2410-2411`), so a per-tool
+  vector here would change no tool's filament list. `MIXED_SCALAR` records that.
 - **Tools 2-8 of the mixed layout get Prusa's own HF0.4 filaments, and that is
   the intended outcome.** HF0.4 is the one INDX nozzle Prusa ships filaments
   for, so there is nothing to derive; `filaments/hyigerINDX-0.25-filaments.ini`

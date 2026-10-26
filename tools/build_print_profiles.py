@@ -42,18 +42,19 @@ LAYOUTS.
 """
 import argparse
 import collections
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import io
 import re
 import sys
 import textwrap
 
-from nozzles import (LAYOUTS, NOZZLES, ROLE_ANCHOR, ROLE_KEYS, STD_VALIDATED,
+from nozzles import (LAYOUTS, NOZZLES, ROLE_ANCHOR, ROLE_HELD, ROLE_KEYS,
+                     ROLE_STEMS, STD_VALIDATED,
                      TIERS, COMMON_EDITS, SIZE_LABELS, area, combine_layers,
                      is_width, scale, speed_for, split_tag, tool_runs)
 
 BUNDLE_NAME = 'hyiger INDX'
-BUNDLE_VERSION = '0.7.1'
+BUNDLE_VERSION = '0.7.2'
 
 # Standard-nozzle sizes: Prusa's print profiles for the matching HF size, rebound.
 STD_SOURCE = {'0.4': '@COREONEINDX HF0.4'}
@@ -161,7 +162,23 @@ def assert_unsourced(sections, drafts, dia):
         r' %s nozzle(?![\w])' % re.escape(dia),                  # <dia> printers
     ]))
     bound = re.compile(r'nozzle_diameter\[\d+\]\s*==\s*%s(\.0+)?(?![\d.])' % re.escape(num))
-    fitted = re.compile(r'^\s*%s(\.0+)?\s*(,|$)' % re.escape(num))
+    want = Decimal(dia)
+
+    def fitted(vector):
+        """Is this diameter fitted to ANY tool? A per-tool nozzle_diameter is a
+        comma-separated vector, and a mixed printer can carry the size on a later
+        tool, so every element is parsed as a number rather than the string being
+        matched from its start."""
+        for part in vector.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if Decimal(part) == want:
+                    return True
+            except InvalidOperation:
+                continue
+        return False
     hits = []
     for where, secs in (('', sections), ('commented draft ', drafts)):
         for name, keys in secs.items():
@@ -169,7 +186,7 @@ def assert_unsourced(sections, drafts, dia):
                 hits.append('%s[%s]' % (where, name))
             if bound.search(keys.get('compatible_printers_condition', '')):
                 hits.append('%s[%s] binds on nozzle_diameter == %s' % (where, name, dia))
-            if name.startswith('printer:') and fitted.match(keys.get('nozzle_diameter', '')):
+            if name.startswith('printer:') and fitted(keys.get('nozzle_diameter', '')):
                 hits.append('%s[%s] has a %s mm nozzle' % (where, name, dia))
     if hits:
         raise SystemExit(
@@ -302,24 +319,35 @@ LAYOUT_BASE = {
 }
 
 # The width each moved role's speed is solved against, from PrintRegion::flow
-# (PrintRegion.cpp:38-65). bridge_speed is deliberately absent: a bridge runs on
-# Flow::bridging_flow, whose width and height both come from the nozzle rather
-# than from a width key, so moving solid infill to another tool must stop the
-# build until someone works that formula through.
+# (PrintRegion.cpp:38-65) and, for supports, support_material_flow
+# (Flow.cpp:245-259). Every speed in ROLE_KEYS must appear here or the build
+# refuses; gap_fill_speed and bridge_speed are absent from ROLE_KEYS itself, for
+# the reasons recorded there.
 ROLE_SPEED_WIDTH = {
     'perimeter_speed': 'perimeter_extrusion_width',
     'external_perimeter_speed': 'external_perimeter_extrusion_width',
     'small_perimeter_speed': 'external_perimeter_extrusion_width',
-    'gap_fill_speed': 'perimeter_extrusion_width',
     'infill_speed': 'infill_extrusion_width',
     'solid_infill_speed': 'solid_infill_extrusion_width',
     'top_solid_infill_speed': 'top_infill_extrusion_width',
+    'support_material_speed': 'support_material_extrusion_width',
 }
 
-ROLE_WHY = ('tool %d carries the %s nozzle and prints this role. Every role a '
-            'layout moves must be pinned: left at Prusa\'s 0 it follows '
-            'whichever tool happens to be loaded, so neither its width nor its '
-            'speed could be attributed to a nozzle')
+# Why a role is pinned, which depends on what Prusa had. perimeter_extruder,
+# infill_extruder and solid_infill_extruder all declare min = 1, so they are
+# always some tool already and the only thing to say is which tool it is now.
+# The two support roles sit at Prusa's 0, "whichever tool is loaded", which is a
+# different claim with a different consequence.
+ROLE_MOVED_WHY = ('tool %d carries the %s nozzle and prints this role, so the '
+                  "widths and speeds it owns come from Prusa's own profile for "
+                  'that nozzle')
+ROLE_PINNED_WHY = ('pinned to tool %d (%s). Prusa leaves this role at 0, '
+                   '"whichever tool is loaded", which names no nozzle. Pinning '
+                   'it is what silences _SUPPORT_NOZZLE_DIAMETER_DIFFER, whose '
+                   'condition tests only the two support extruder keys '
+                   '(Print.cpp:675-679); it does not change the support width, '
+                   'because at 0 the support flow already falls back to the '
+                   'smallest fitted nozzle (Flow.cpp:245-252)')
 
 # Why the tiers are renamed rather than keeping Prusa's own names. Unlike the
 # --std 0.4 copies, which share Prusa's aliases harmlessly because no printer
@@ -333,6 +361,14 @@ RENAME_WHY = ('renamed to this repo\'s own tier labels: a mixed printer also '
               'satisfies Prusa\'s own %s condition, so sharing an alias with '
               'Prusa\'s profiles would hide these behind them '
               '(Preset.cpp:1388-1401)')
+
+
+# A role may not own a speed with no width to solve it against: that would be a
+# silent hold rather than a transfer.
+_unsolvable = sorted(k for keys in ROLE_KEYS.values() for k in keys
+                     if k.endswith('_speed') and k not in ROLE_SPEED_WIDTH)
+assert not _unsolvable, ('ROLE_KEYS owns speeds with no ROLE_SPEED_WIDTH entry: %s'
+                         % _unsolvable)
 
 
 def layout_tiers(vendor, layout):
@@ -365,6 +401,14 @@ def layout_tiers(vendor, layout):
         resolved.append((absolute(r.get('layer_height'), key + ' layer_height'),
                          key[len('print:'):], r))
     resolved.sort()
+    heights = [h for h, _n, _c in resolved]
+    if len(set(heights)) != len(heights):
+        raise SystemExit(
+            'refusing: Prusa\'s "%s" profiles do not have distinct layer '
+            'heights (%s),\n          so sorting them cannot say which is '
+            'Detail, Balanced or Draft - the\n          order would come down to '
+            'preset names. That needs a human decision.'
+            % (suffix, ', '.join('%g' % h for h in heights)))
     out = []
     for (h, prusa_name, r), (_tier_key, label, _idx) in zip(resolved, TIERS):
         out.append((label, '%.2fmm %s @COREONEINDX %s' % (h, label, layout.key),
@@ -408,15 +452,19 @@ def anchor_rate(anchor, speed_key, name):
 
 
 def combine_cap(layout):
-    """The combined sparse-infill height PrusaSlicer will allow in this layout.
+    """The combined sparse-infill height this repo allows in this layout.
 
-    PrintObject::combine_infill (PrintObject.cpp:3126-3132) caps it at the
-    smaller of the infill and solid-infill extruders' nozzles - so a layout that
-    keeps solid infill on the small nozzle is capped by the small nozzle however
-    large the infill one is. The second term is PrusaSlicer's own default
-    ceiling for a nozzle's layer height, 0.75 x diameter (Slicing.cpp:48), which
-    keeps a combined extrusion inside what that nozzle is asked to lay down
-    anywhere else.
+    Two terms, and only the first is PrusaSlicer's. PrintObject::combine_infill
+    caps the combined height at the smaller of the infill and solid-infill
+    extruders' nozzles (PrintObject.cpp:3128-3132), so a layout that keeps solid
+    infill on the small nozzle is capped by the small nozzle however large the
+    infill one is; with a manual infill_every_layers that is the whole of
+    PrusaSlicer's limit (max_combine_layer_height = nozzle_diameter,
+    PrintObject.cpp:3132). The second term, 0.75 x the infill nozzle, is THIS
+    REPO'S own ceiling: it is the value PrusaSlicer defaults max_layer_height to
+    when a printer leaves it unset (Slicing.cpp:48), so a combined extrusion is
+    never taller than that nozzle is asked to lay down anywhere else. It does not
+    bind today (0.75 x 0.4 = 0.3, against the 0.25 nozzle cap).
     """
     infill = float(layout.dia(layout.roles['infill_extruder']))
     solid = float(layout.dia(layout.roles['solid_infill_extruder']))
@@ -438,39 +486,57 @@ def role_anchor(vendor, layout, role, pos):
     return name, why, collections.OrderedDict(resolve(vendor, 'print:' + name))
 
 
-def build_layout(vendor, layout, report, edits):
-    """A mixed-nozzle tool layout: Prusa's own profiles for the base tool, with
-    every role pinned to a tool, and each role that sits on another tool taking
-    that tool's own width from Prusa's profile for it plus a speed re-solved to
-    that profile's own volumetric rate at this layout's geometry."""
+def assert_roles_pinned(layout):
+    """Every role PrusaSlicer can assign must be named by the layout. Shared with
+    build_printer_preset.py so a layout the print bundle would refuse cannot get
+    a printer preset pointing at profiles that were never emitted."""
     unpinned = sorted(set(ROLE_KEYS) - set(layout.roles))
     unknown = sorted(set(layout.roles) - set(ROLE_KEYS))
     if unpinned or unknown:
         raise SystemExit(
             'refusing: layout %s %s.\n'
             '          A layout must pin every role PrusaSlicer can assign: one\n'
-            '          left at Prusa\'s 0 follows whichever tool is loaded, so its\n'
+            "          left at Prusa's 0 follows whichever tool is loaded, so its\n"
             '          nozzle - and so its widths and speeds - cannot be known.'
             % (layout.key,
                ' and '.join(filter(None, [
                    'leaves %s unpinned' % ', '.join(unpinned) if unpinned else '',
                    'pins %s, which is not a role in ROLE_KEYS'
                    % ', '.join(unknown) if unknown else '']))))
+    unmovable = ['%s -> tool %d' % (r, p) for r, p in sorted(layout.roles.items())
+                 if p != layout.base_tool and not ROLE_KEYS[r]]
+    if unmovable:
+        raise SystemExit(
+            'refusing: layout %s moves %s onto another tool, and that role owns '
+            'no\n          width or speed of its own (ROLE_KEYS), so nothing '
+            'would follow it\n          there. See the note beside ROLE_KEYS in '
+            'nozzles.py for why, and what\n          it would take to support it.'
+            % (layout.key, ', '.join(unmovable)))
 
+
+def build_layout(vendor, layout, report, edits):
+    """A mixed-nozzle tool layout: Prusa's own profiles for the base tool, with
+    every role pinned to a tool, and each role that sits on another tool taking
+    that tool's own width from Prusa's profile for it plus a speed re-solved to
+    that profile's own volumetric rate at this layout's geometry."""
+    assert_roles_pinned(layout)
     base_pos = layout.base_tool
     base_tag = layout.tool_tag(base_pos)
     tiers = layout_tiers(vendor, layout)
     base_dia = split_tag(base_tag)[0]
 
     moved = [(role, pos) for role, pos in sorted(layout.roles.items())
-             if pos != base_pos and ROLE_KEYS[role]]
+             if pos != base_pos]
     cap = combine_cap(layout)
     combining = any('infill_speed' in ROLE_KEYS[role] for role, _pos in moved)
 
-    changes, profiles, rates = [], collections.OrderedDict(), []
+    changes, profiles, rates, holds = [], collections.OrderedDict(), [], []
     for label, name, cfg, prusa_name in tiers:
         cfg.pop('renamed_from', None)   # names Prusa's preset, never this one
         h = absolute(cfg.get('layer_height'), name + ' layer_height')
+        # Prusa's profile as it stands, for the owned-key gate below: comparing
+        # after the layout's own edits would flag the layout's own work.
+        pristine = dict(cfg)
 
         def change(key, val, why, _name=name, _cfg=cfg):
             changes.append((_name, key, _cfg.get(key), val, why))
@@ -484,7 +550,8 @@ def build_layout(vendor, layout, report, edits):
                 continue
             change(key, val, why)
         for role, pos in sorted(layout.roles.items()):
-            change(role, str(pos), ROLE_WHY % (pos, layout.tool_tag(pos)))
+            why = ROLE_PINNED_WHY if cfg.get(role) == '0' else ROLE_MOVED_WHY
+            change(role, str(pos), why % (pos, layout.tool_tag(pos)))
         for key, (val, why) in sorted(layout.extra.items()):
             change(key, val, why)
 
@@ -494,14 +561,50 @@ def build_layout(vendor, layout, report, edits):
         n = combine_layers(cap, h) if combining else 1
         if combining:
             change('infill_every_layers', str(n),
-                   'up to %g mm of combined sparse infill at this layer height, '
-                   'which is all PrusaSlicer will combine here '
-                   '(PrintObject.cpp:3126-3132, Slicing.cpp:48). It also cuts the '
-                   'tool changes a split role costs from one pair per layer to '
-                   'one pair per %d' % (cap, n))
+                   'up to %g mm of combined sparse infill at this layer height. '
+                   'That is the smaller of the infill and solid-infill nozzles, '
+                   'which is all PrusaSlicer itself will combine '
+                   '(PrintObject.cpp:3128-3132), bounded also by 0.75 x the '
+                   "infill nozzle - this repo's own ceiling, taken from the "
+                   'default PrusaSlicer uses for an unset max_layer_height '
+                   '(Slicing.cpp:48), which does not bind here. Combining also '
+                   'cuts the tool changes a split role costs from one pair per '
+                   'layer to one pair per %d' % (cap, n))
 
         for role, pos in moved:
             anchor_name, anchor_why, anchor = role_anchor(vendor, layout, role, pos)
+
+            # Every key this role owns must be accounted for: transferred with
+            # the role (ROLE_KEYS) or deliberately held with a reason
+            # (ROLE_HELD). Anything else that differs between the base profile
+            # and this tool's anchor would be a per-nozzle figure silently left
+            # at the base tool's value.
+            stems, held = ROLE_STEMS.get(role, ()), ROLE_HELD.get(role, {})
+            owned = sorted(k for k in set(pristine) | set(anchor)
+                           if stems and k.startswith(stems)
+                           and k not in layout.roles)
+            # Only where Prusa's profile for that tool actually sets the key:
+            # a key it is silent on carries no per-nozzle figure to leave behind.
+            unreviewed = ['%s: base %s, %s %s'
+                          % (k, shown(pristine.get(k)), anchor_name,
+                             shown(anchor.get(k)))
+                          for k in owned
+                          if k in anchor and pristine.get(k) != anchor[k]
+                          and k not in ROLE_KEYS[role] and k not in held]
+            if unreviewed:
+                raise SystemExit(
+                    'refusing: %s moves %s onto tool %d, and these keys it owns '
+                    'differ between\n          the base tool and that tool '
+                    'without being transferred or held:\n            %s\n'
+                    '          Each one is a per-nozzle figure. Add it to '
+                    'ROLE_KEYS to move with\n          the role, or to ROLE_HELD '
+                    'with the reason it stays behind.'
+                    % (layout.key, role, pos, '\n            '.join(unreviewed)))
+            for key, why in sorted(held.items()):
+                if key in anchor and pristine.get(key) != anchor[key]:
+                    holds.append((name, key, pristine.get(key),
+                                  anchor_name, anchor.get(key), why))
+
             # Widths first: each speed is solved against the width this profile
             # will actually emit, not the one it inherited.
             for key in sorted(ROLE_KEYS[role],
@@ -587,7 +690,15 @@ def build_layout(vendor, layout, report, edits):
     variants = collections.OrderedDict(
         (n, collections.OrderedDict((k, v) for k, v in p.items() if k not in common))
         for n, p in profiles.items())
-    report.append((layout, list(variants), common, rates))
+    # A key held identically by every tier is reported once; one that differs per
+    # tier keeps its tier name.
+    grouped_holds = collections.OrderedDict()
+    for hname, key, base_v, anchor_name, anchor_v, why in holds:
+        grouped_holds.setdefault((key, base_v, anchor_name, anchor_v, why),
+                                 []).append(hname)
+    holds = [(('' if len(names) == len(profiles) else ', '.join(names)),) + k
+             for k, names in grouped_holds.items()]
+    report.append((layout, list(variants), common, rates, holds))
     return common, variants
 
 
@@ -800,7 +911,17 @@ def main():
               'pinning, the\n# layout\'s own decisions, then the moved roles). A '
               'change named with a\n# profile applies to that tier only:\n')
             w(''.join(l + '\n' for l in why_lines(edits)))
-        rates = next(r for lo, _n, _c, r in layout_report if lo is layout)
+        rates, holds = next((r, hd) for lo, _n, _c, r, hd in layout_report
+                            if lo is layout)
+        if holds:
+            w('#\n# Held at the base tool\'s value, although the moved role owns '
+              'them and Prusa\'s\n# profile for that tool differs (ROLE_HELD):\n')
+            for hname, key, base_v, anchor_name, anchor_v, why in holds:
+                w('#   %s%s: %s (%s has %s)\n'
+                  % (hname and hname + ': ', key, shown(base_v), anchor_name,
+                     shown(anchor_v)))
+                for line in textwrap.wrap(why, 68):
+                    w('#       %s\n' % line)
         if rates:
             w('#\n# Moved roles, tier by tier. Each speed is solved so the rate '
               'matches the one\n# Prusa\'s own profile for that tool runs the role '
@@ -846,7 +967,7 @@ def main():
             print('  !! UNVALIDATED: not yet test printed on a standard nozzle')
         for n in names:
             print('     %s' % n)
-    for layout, names, common, rates in layout_report:
+    for layout, names, common, rates, holds in layout_report:
         base_tag = layout.tool_tag(layout.base_tool)
         print('\n%s  <- Prusa\'s own "%s" prints, renamed, rebound and '
               'split   %d shared keys'
@@ -860,6 +981,11 @@ def main():
             print('     %-42s %s = %s -> %.1f mm3/s (Prusa %.1f%s)'
                   % (name, k, speed, got, want,
                      '' if speed < cap else ', capped at %d mm/s' % cap))
+        for key in sorted({h[1] for h in holds}):
+            base_v, anchor_name, anchor_v = next(
+                (h[2], h[3], h[4]) for h in holds if h[1] == key)
+            print('     HELD %-31s %s (Prusa\'s %s has %s)'
+                  % (key, shown(base_v), anchor_name, shown(anchor_v)))
         if not layout.validated:
             warn = True
             print('  !! UNVALIDATED: %s' % layout.note)
